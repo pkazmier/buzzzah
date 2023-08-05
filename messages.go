@@ -5,9 +5,14 @@ import (
 	"fmt"
 )
 
-type message struct {
+type rawMessage struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
+}
+
+type message struct {
+	Type string `json:"type"`
+	Data any    `json:"data"`
 }
 
 // chatMessage sent by subscriber to broadcast a chat.
@@ -31,6 +36,7 @@ type joinMessage struct {
 // message.type == "leave"
 type leaveMessage struct {
 	Name string `json:"name"`
+	Team string `json:"team"`
 }
 
 // buzzerMessage sent by subscriber to "buzz in".
@@ -52,7 +58,27 @@ type scoreBoardMessage struct {
 	Score map[string]int `json:"scoreboard"`
 }
 
-func decodeMessage(msg message) (any, error) {
+// will panic if we try to encode a non-existent message type
+func encodeMessage(msg any) message {
+	var encoded message
+	switch msg.(type) {
+	case chatMessage:
+		encoded = message{Type: "chat", Data: msg}
+	case joinMessage:
+		encoded = message{Type: "join", Data: msg}
+	case leaveMessage:
+		encoded = message{Type: "leave", Data: msg}
+	case buzzerMessage:
+		encoded = message{Type: "buzzer", Data: msg}
+	case resetBuzzerMessage:
+		encoded = message{Type: "reset", Data: msg}
+	case scoreBoardMessage:
+		encoded = message{Type: "score", Data: msg}
+	}
+	return encoded
+}
+
+func decodeMessage(msg rawMessage) (any, error) {
 	var err error
 	switch msg.Type {
 	case "chat":

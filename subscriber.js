@@ -3,7 +3,7 @@
   // if the user has just submitted a message
   // and so we should scroll the next message into view when received.
   let expectingMessage = false;
-  const conn = new WebSocket(`ws://${location.host}/subscribe`);
+  const conn = new WebSocket(`ws://${location.host}/join${location.search}`);
 
   conn.addEventListener("close", (ev) => {
     appendLog(
@@ -26,8 +26,21 @@
       return;
     }
     const msg = JSON.parse(ev.data);
-    const p = appendLog(msg.text);
-    if (expectingMessage) {
+    let p;
+    switch (msg.type) {
+      case "chat":
+        p = appendLog(msg.data.text);
+        break;
+      case "join":
+        p = appendLog(msg.data.name + " has joined team " + msg.data.team);
+        break;
+      case "leave":
+        p = appendLog(msg.data.name + " has left team " + msg.data.team);
+        break;
+      default:
+        console.info("unsupported message type received", msg.type);
+    }
+    if (expectingMessage && p) {
       p.scrollIntoView();
       expectingMessage = false;
     }

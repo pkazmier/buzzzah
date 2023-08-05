@@ -51,7 +51,7 @@ func newGameShow() *gameShow {
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*100), 20),
 	}
 	gs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
-	gs.serveMux.HandleFunc("/subscribe", gs.subscribeHandler)
+	gs.serveMux.HandleFunc("/join", gs.subscribeHandler)
 
 	return gs
 }
@@ -66,6 +66,10 @@ type subscriber struct {
 	incoming  chan any
 	outgoing  chan any
 	closeSlow func()
+}
+
+func (s subscriber) isHost() bool {
+	return s.team == "host"
 }
 
 func (gs *gameShow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +87,11 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close(websocket.StatusInternalError, "")
 
-	err = gs.subscriberLoop(r.Context(), c)
+	query := r.URL.Query()
+	name := query.Get("name")
+	team := query.Get("team")
+
+	err = gs.subscriberLoop(r.Context(), name, team, c)
 	if errors.Is(err, context.Canceled) {
 		return
 	}
@@ -104,8 +112,10 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 // connections and then registers the subscriber. It then listens for all messages
 // and writes them to the WebSocket. If the context is cancelled or
 // an error occurs, it returns and deletes the subscription.
-func (gs *gameShow) subscriberLoop(ctx context.Context, c *websocket.Conn) error {
+func (gs *gameShow) subscriberLoop(ctx context.Context, name, team string, c *websocket.Conn) error {
 	s := &subscriber{
+		name:     name,
+		team:     team,
 		errc:     make(chan error, 1),
 		incoming: make(chan any, 1),
 		outgoing: make(chan any, gs.subscriberMessageBuffer),
@@ -142,7 +152,7 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, c *websocket.Conn) error
 
 func (gs *gameShow) queueIncomingMessages(ctx context.Context, c *websocket.Conn, s *subscriber) {
 	for {
-		var msg message
+		var msg rawMessage
 		err := wsjson.Read(ctx, c, &msg)
 		if err != nil {
 			s.errc <- err
@@ -182,19 +192,28 @@ func (cs *gameShow) publish(msg any) {
 }
 
 // addSubscriber registers a subscriber.
-func (cs *gameShow) addSubscriber(s *subscriber) {
-	cs.logf("Adding subcriber ...")
-	cs.subscribersMu.Lock()
-	cs.subscribers[s] = struct{}{}
-	cs.subscribersMu.Unlock()
+func (gs *gameShow) addSubscriber(s *subscriber) {
+	gs.logf("Adding subcriber ...")
+	gs.subscribersMu.Lock()
+	gs.subscribers[s] = struct{}{}
+	gs.subscribersMu.Unlock()
+
+	// Upon connection, notify others unless it is a host.
+	if !s.isHost() {
+		gs.publish(encodeMessage(joinMessage{s.name, s.team}))
+	}
 }
 
 // deleteSubscriber deletes the given subscriber.
-func (cs *gameShow) deleteSubscriber(s *subscriber) {
-	cs.logf("Removing subcriber ...")
-	cs.subscribersMu.Lock()
-	delete(cs.subscribers, s)
-	cs.subscribersMu.Unlock()
+func (gs *gameShow) deleteSubscriber(s *subscriber) {
+	gs.logf("Removing subcriber ...")
+	gs.subscribersMu.Lock()
+	delete(gs.subscribers, s)
+	gs.subscribersMu.Unlock()
+
+	if !s.isHost() {
+		gs.publish(encodeMessage(leaveMessage{s.name, s.team}))
+	}
 }
 
 func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, msg any) error {
