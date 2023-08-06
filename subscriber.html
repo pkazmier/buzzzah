@@ -3,23 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <title>nhooyr.io/websocket - Chat Example</title>
-    <meta name="viewport" content="width=device-width" />
-
-    <link href="https://unpkg.com/sanitize.css" rel="stylesheet" />
-    <link href="https://unpkg.com/sanitize.css/typography.css" rel="stylesheet" />
-    <link href="https://unpkg.com/sanitize.css/forms.css" rel="stylesheet" />
-    <link href="/subscriber.css" rel="stylesheet" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css" />
+    <link rel="stylesheet" href="subscriber.css" />
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   </head>
   <body>
-    <div id="root">
-      <div id="message-log"></div>
-      <div id="publish-form-container">
-        <form id="publish-form">
-          <input name="message" id="message-input" type="text" />
-          <input value="Submit" type="submit" />
-        </form>
-      </div>
-    </div>
+    <header>
+      <h1>Quarterly Jeopardy</h1>
+      <p>No more confusion over who buzzed in!</p>
+    </header>
+    <main>
+      <div id="container" class="svg-container"></div>
+    </main>
+    <footer>
+      <p>CAPE Network Engineering</p>
+    </footer>
     <script type="text/javascript" src="/subscriber.js"></script>
   </body>
 </html>

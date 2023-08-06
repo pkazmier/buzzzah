@@ -48,7 +48,7 @@ func newGameShow() *gameShow {
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
 		subscribers:             make(map[*subscriber]struct{}),
-		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*100), 20),
+		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*50), 50),
 	}
 	gs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
 	gs.serveMux.HandleFunc("/join", gs.subscribeHandler)
@@ -130,17 +130,17 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, name, team string, c *we
 
 	for {
 		select {
-		case msg := <-s.outgoing:
-			err := writeTimeout(ctx, time.Second*5, c, msg)
-			if err != nil {
-				return err
-			}
 		case msg := <-s.incoming:
 			switch msg := msg.(type) {
 			case chatMessage:
 				gs.publish(msg)
 			default:
 				gs.logf("received unknown message type: %v", msg)
+			}
+		case msg := <-s.outgoing:
+			err := writeTimeout(ctx, time.Second*5, c, msg)
+			if err != nil {
+				return err
 			}
 		case err := <-s.errc:
 			return err
