@@ -88,10 +88,10 @@
     .append("g")
     .attr("stroke", "#fff")
     .attr("stroke-width", 1.5)
-    .selectAll("circle");
+    .selectAll(".node");
 
   function ticked() {
-    node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
+    node.attr("transform", (d) => `translate(${d.x}, ${d.y})`);
 
     link
       .attr("x1", (d) => d.source.x)
@@ -135,10 +135,31 @@
       .join(
         (enter) =>
           enter
-            .append("circle")
-            .attr("r", 0)
-            .attr("fill", (d) => color(d.team))
-            .call((enter) => enter.transition(t).attr("r", 20)),
+            .append("g")
+            .attr("class", "node")
+            .call((enter) =>
+              enter
+                .append("circle")
+                .attr("r", 0)
+                .attr("fill", (d) => color(d.team))
+                .call((enter) => enter.transition(t).attr("r", 20))
+            )
+            .call((enter) =>
+              enter
+                .append("text")
+                .text((d) => d.id)
+                .attr("fill", "#fff")
+                .attr("font-size", "0px")
+                .attr("text-anchor", "middle")
+                // .attr("x", 0)
+                // .attr("y", 0)
+                .call((enter) =>
+                  enter
+                    .transition(t)
+                    .attr("y", ".35em")
+                    .attr("font-size", "24px")
+                )
+            ),
         (update) => update,
         (exit) => exit.call((exit) => exit.transition(t).attr("r", 0).remove())
       );
