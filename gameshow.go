@@ -42,8 +42,8 @@ type gameShow struct {
 	// to the appropriate handler.
 	serveMux http.ServeMux
 
-	subscribersMu sync.Mutex
-	pending       map[string]*subscriber // key: token
+	tokenAndSubMu sync.Mutex
+	token2user    map[string]user        // key: token value: name
 	subscribers   map[string]*subscriber // key: name
 }
 
@@ -52,7 +52,7 @@ func newGameShow() *gameShow {
 	gs := &gameShow{
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
-		pending:                 make(map[string]*subscriber),
+		token2user:              make(map[string]user),
 		subscribers:             make(map[string]*subscriber),
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*50), 50),
 	}
@@ -63,12 +63,16 @@ func newGameShow() *gameShow {
 	return gs
 }
 
+type user struct {
+	name string
+	team string
+}
+
 // subscriber represents a subscriber.
 // Messages are sent on the msgs channel and if the client
 // cannot keep up with the messages, closeSlow is called.
 type subscriber struct {
-	name     string
-	team     string
+	user
 	errc     chan error
 	incoming chan any
 	outgoing chan any
@@ -92,8 +96,8 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	name := query.Get("name")
 	team := query.Get("team")
 
-	gs.subscribersMu.Lock()
-	defer gs.subscribersMu.Unlock()
+	gs.tokenAndSubMu.Lock()
+	defer gs.tokenAndSubMu.Unlock()
 
 	if _, userExists := gs.subscribers[name]; userExists {
 		http.Error(w, "user already exists, pick another name", http.StatusConflict)
@@ -107,13 +111,7 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gs.logf("reserving %s with token %s", name, token)
-	gs.pending[token] = &subscriber{
-		name:     name,
-		team:     team,
-		errc:     make(chan error, 1),
-		incoming: make(chan any, 1),
-		outgoing: make(chan any, gs.subscriberMessageBuffer),
-	}
+	gs.token2user[token] = user{name, team}
 
 	url := fmt.Sprintf("/subscriber.html?token=%s", url.QueryEscape(token))
 	http.Redirect(w, r, url, http.StatusSeeOther)
@@ -136,20 +134,27 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	// move user from pending to subscribers, capture the websocket
 	// in our subcriber struct, so it's safe to fully initialized
 	// and ready for the subscriber loop.
-	gs.subscribersMu.Lock()
-	s, ok := gs.pending[token]
+	gs.tokenAndSubMu.Lock()
+	user, ok := gs.token2user[token]
 	if !ok {
-		gs.subscribersMu.Unlock()
+		gs.tokenAndSubMu.Unlock()
 		gs.logf("token not found: %s", token)
+		c.Close(websocket.StatusInternalError, "token not valid")
 		return
 	}
-	s.conn = c
-	gs.subscribers[s.name] = s
-	delete(gs.pending, token)
-	gs.subscribersMu.Unlock()
+
+	s := &subscriber{
+		user:     user,
+		errc:     make(chan error, 1),
+		conn:     c,
+		incoming: make(chan any, 1),
+		outgoing: make(chan any, gs.subscriberMessageBuffer),
+	}
+	gs.tokenAndSubMu.Unlock()
 
 	err = gs.subscriberLoop(r.Context(), s)
 	if errors.Is(err, context.Canceled) {
+		c.Close(websocket.StatusInternalError, err.Error())
 		return
 	}
 	if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
@@ -158,6 +163,7 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		gs.logf("%v", err)
+		c.Close(websocket.StatusInternalError, err.Error())
 		return
 	}
 }
@@ -221,8 +227,8 @@ func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 // It never blocks and so messages to slow subscribers
 // are dropped.
 func (gs *gameShow) publish(msg any) {
-	gs.subscribersMu.Lock()
-	defer gs.subscribersMu.Unlock()
+	gs.tokenAndSubMu.Lock()
+	defer gs.tokenAndSubMu.Unlock()
 
 	gs.publishLimiter.Wait(context.Background())
 
@@ -239,9 +245,9 @@ func (gs *gameShow) publish(msg any) {
 // addSubscriber registers a subscriber.
 func (gs *gameShow) addSubscriber(s *subscriber) {
 	gs.logf("Adding subcriber ...")
-	gs.subscribersMu.Lock()
+	gs.tokenAndSubMu.Lock()
 	gs.subscribers[s.name] = s
-	gs.subscribersMu.Unlock()
+	gs.tokenAndSubMu.Unlock()
 
 	// Upon connection, notify others unless it is a host.
 	if !s.isHost() {
@@ -252,9 +258,9 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 // deleteSubscriber deletes the given subscriber.
 func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	gs.logf("Removing subcriber ...")
-	gs.subscribersMu.Lock()
+	gs.tokenAndSubMu.Lock()
 	delete(gs.subscribers, s.name)
-	gs.subscribersMu.Unlock()
+	gs.tokenAndSubMu.Unlock()
 
 	if !s.isHost() {
 		gs.publish(leaveMessage{s.name, s.team})
