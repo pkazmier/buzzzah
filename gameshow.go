@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -39,7 +43,8 @@ type gameShow struct {
 	serveMux http.ServeMux
 
 	subscribersMu sync.Mutex
-	subscribers   map[*subscriber]struct{}
+	pending       map[string]*subscriber // key: token
+	subscribers   map[string]*subscriber // key: name
 }
 
 // newGameShow constructs a gameShow with the defaults.
@@ -47,10 +52,12 @@ func newGameShow() *gameShow {
 	gs := &gameShow{
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
-		subscribers:             make(map[*subscriber]struct{}),
+		pending:                 make(map[string]*subscriber),
+		subscribers:             make(map[string]*subscriber),
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*50), 50),
 	}
 	gs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
+	gs.serveMux.HandleFunc("/login", gs.loginHandler)
 	gs.serveMux.HandleFunc("/join", gs.subscribeHandler)
 
 	return gs
@@ -60,20 +67,56 @@ func newGameShow() *gameShow {
 // Messages are sent on the msgs channel and if the client
 // cannot keep up with the messages, closeSlow is called.
 type subscriber struct {
-	name      string
-	team      string
-	errc      chan error
-	incoming  chan any
-	outgoing  chan any
-	closeSlow func()
+	name     string
+	team     string
+	errc     chan error
+	incoming chan any
+	outgoing chan any
+	conn     *websocket.Conn
 }
 
-func (s subscriber) isHost() bool {
+func (s *subscriber) isHost() bool {
 	return s.team == "host"
+}
+
+func (s *subscriber) closeSlow() {
+	s.conn.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
 }
 
 func (gs *gameShow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gs.serveMux.ServeHTTP(w, r)
+}
+
+func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	name := query.Get("name")
+	team := query.Get("team")
+
+	gs.subscribersMu.Lock()
+	defer gs.subscribersMu.Unlock()
+
+	if _, userExists := gs.subscribers[name]; userExists {
+		http.Error(w, "user already exists, pick another name", http.StatusConflict)
+		return
+	}
+
+	token, err := generateToken(32)
+	if err != nil {
+		http.Error(w, "could not generate token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	gs.logf("reserving %s with token %s", name, token)
+	gs.pending[token] = &subscriber{
+		name:     name,
+		team:     team,
+		errc:     make(chan error, 1),
+		incoming: make(chan any, 1),
+		outgoing: make(chan any, gs.subscriberMessageBuffer),
+	}
+
+	url := fmt.Sprintf("/subscriber.html?token=%s", url.QueryEscape(token))
+	http.Redirect(w, r, url, http.StatusSeeOther)
 }
 
 // subscribeHandler accepts the WebSocket connection
@@ -87,11 +130,25 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close(websocket.StatusInternalError, "")
 
-	query := r.URL.Query()
-	name := query.Get("name")
-	team := query.Get("team")
+	// token that we provided when they "login"
+	token := r.URL.Query().Get("token")
 
-	err = gs.subscriberLoop(r.Context(), name, team, c)
+	// move user from pending to subscribers, capture the websocket
+	// in our subcriber struct, so it's safe to fully initialized
+	// and ready for the subscriber loop.
+	gs.subscribersMu.Lock()
+	s, ok := gs.pending[token]
+	if !ok {
+		gs.subscribersMu.Unlock()
+		gs.logf("token not found: %s", token)
+		return
+	}
+	s.conn = c
+	gs.subscribers[s.name] = s
+	delete(gs.pending, token)
+	gs.subscribersMu.Unlock()
+
+	err = gs.subscriberLoop(r.Context(), s)
 	if errors.Is(err, context.Canceled) {
 		return
 	}
@@ -105,28 +162,11 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// TODO: update comment
-//
-// subscriberLoop subscribes the given WebSocket to all broadcast messages.
-// It creates a subscriber with a buffered msgs chan to give some room to slower
-// connections and then registers the subscriber. It then listens for all messages
-// and writes them to the WebSocket. If the context is cancelled or
-// an error occurs, it returns and deletes the subscription.
-func (gs *gameShow) subscriberLoop(ctx context.Context, name, team string, c *websocket.Conn) error {
-	s := &subscriber{
-		name:     name,
-		team:     team,
-		errc:     make(chan error, 1),
-		incoming: make(chan any, 1),
-		outgoing: make(chan any, gs.subscriberMessageBuffer),
-		closeSlow: func() {
-			c.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
-		},
-	}
+func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 	gs.addSubscriber(s)
 	defer gs.deleteSubscriber(s)
 
-	go gs.queueIncomingMessages(ctx, c, s)
+	go gs.queueIncomingMessages(ctx, s)
 
 	for {
 		select {
@@ -142,7 +182,7 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, name, team string, c *we
 			}
 		case msg := <-s.outgoing:
 			gs.logf("Pulling msg to publish: %+v", msg)
-			err := writeTimeout(ctx, time.Second*5, c, msg)
+			err := writeTimeout(ctx, time.Second*5, s.conn, msg)
 			if err != nil {
 				return err
 			}
@@ -154,10 +194,10 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, name, team string, c *we
 	}
 }
 
-func (gs *gameShow) queueIncomingMessages(ctx context.Context, c *websocket.Conn, s *subscriber) {
+func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 	for {
 		var msg rawMessage
-		err := wsjson.Read(ctx, c, &msg)
+		err := wsjson.Read(ctx, s.conn, &msg)
 		if err != nil {
 			s.errc <- err
 			break
@@ -186,8 +226,8 @@ func (gs *gameShow) publish(msg any) {
 
 	gs.publishLimiter.Wait(context.Background())
 
-	for s := range gs.subscribers {
-		gs.logf("publishing event to %s: %+v", s.name, msg)
+	for name, s := range gs.subscribers {
+		gs.logf("publishing event to %s: %+v", name, msg)
 		select {
 		case s.outgoing <- encodeMessage(msg):
 		default:
@@ -200,7 +240,7 @@ func (gs *gameShow) publish(msg any) {
 func (gs *gameShow) addSubscriber(s *subscriber) {
 	gs.logf("Adding subcriber ...")
 	gs.subscribersMu.Lock()
-	gs.subscribers[s] = struct{}{}
+	gs.subscribers[s.name] = s
 	gs.subscribersMu.Unlock()
 
 	// Upon connection, notify others unless it is a host.
@@ -213,7 +253,7 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	gs.logf("Removing subcriber ...")
 	gs.subscribersMu.Lock()
-	delete(gs.subscribers, s)
+	delete(gs.subscribers, s.name)
 	gs.subscribersMu.Unlock()
 
 	if !s.isHost() {
@@ -226,4 +266,13 @@ func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn,
 	defer cancel()
 
 	return wsjson.Write(ctx, c, msg)
+}
+
+func generateToken(length int) (string, error) {
+	b := make([]byte, length)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

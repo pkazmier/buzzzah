@@ -4,3 +4,7 @@ body {
 /* svg { */
 /*   background: black; */
 /* } */
+
+#msgbox {
+  visibility: hidden;
+}
