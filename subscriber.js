@@ -18,6 +18,8 @@
         console.log(
           `WebSocket Disconnected code: ${ev.code}, reason: ${ev.reason}`
         );
+        // TODO: Don't reconnect on 1011 internal server errors.
+        // Instead popup an error message for user.
         if (ev.code !== 1001) {
           console.log("Reconnecting in 1s");
           setTimeout(() => this.dial(), 1000);
@@ -28,35 +30,34 @@
         console.log("websocket connected");
       });
 
-      // This is where we handle messages received.
       this.conn.addEventListener("message", (ev) => {
         if (typeof ev.data !== "string") {
           console.error("unexpected message type", typeof ev.data);
           return;
         }
         const msg = JSON.parse(ev.data);
-        switch (msg.type) {
-          case "chat":
-            this.dispatchEvent(new CustomEvent("chat", { detail: msg.data }));
-            break;
-          case "join":
-            this.dispatchEvent(new CustomEvent("join", { detail: msg.data }));
-            break;
-          case "leave":
-            this.dispatchEvent(new CustomEvent("leave", { detail: msg.data }));
-            break;
-          case "buzzer":
-            this.dispatchEvent(new CustomEvent("buzzer", { detail: msg.data }));
-            break;
-          default:
-            console.log("unsupported message type received", msg.type);
-        }
+        this.dispatchEvent(new CustomEvent(msg.type, { detail: msg.data }));
       });
     }
   }
 
+  function buzzScale(count) {
+    switch (count) {
+      case 0:
+        return 1;
+      case 1:
+        return 4;
+      case 2:
+        return 3;
+      case 3:
+        return 2;
+      default:
+        return 1.5;
+    }
+  }
+
   let width = 1200;
-  let height = 900;
+  let height = 600;
 
   const color = d3.scaleOrdinal(d3.schemeCategory10);
 
@@ -80,16 +81,32 @@
     .attr("width", width)
     .attr("height", height)
     .attr("viewBox", [-width / 2, -height / 2, width, height])
-    .attr("style", "max-width: 100%; height: auto;")
-    .on("click", (d) => gs.send({ type: "buzzer", data: { name: "Darrah" } }));
+    .attr("style", "max-width: 100%; height: auto;");
 
-  let link = svg
+  const g = svg.append("g");
+
+  svg.call(
+    d3
+      .zoom()
+      .extent([
+        [0, 0],
+        [width, height],
+      ])
+      .scaleExtent([1 / 8, 8])
+      .on("zoom", zoomed)
+  );
+
+  function zoomed({ transform }) {
+    g.attr("transform", transform);
+  }
+
+  let link = g
     .append("g")
     .attr("stroke", "#fff")
     .attr("stroke-width", 1.5)
     .selectAll("line");
 
-  let node = svg
+  let node = g
     .append("g")
     .attr("stroke", "#fff")
     .attr("stroke-width", 1.5)
@@ -105,36 +122,16 @@
       .attr("y2", (d) => d.target.y);
   }
 
-  let nodes = []; // list of { id: "Pete", team: "A"}
+  let nodes = []; // list of { id: "Pete", team: "A", buzz: 0}
   let links = []; // list of { source: "Pete", target: "A" }
-
-  // let nodes = [
-  //   { id: "Pete", team: "A" },
-  //   { id: "Darrah", team: "A" },
-  //   { id: "Brian", team: "B" },
-  //   { id: "Alan", team: "B" },
-  //   { id: "Colm", team: "C" },
-  //   { id: "Chris", team: "C" },
-  //   { id: "A", team: "A" },
-  //   { id: "B", team: "B" },
-  //   { id: "C", team: "C" },
-  // ];
-  //
-  // let links = [
-  //   { source: "Pete", target: "A" },
-  //   { source: "Darrah", target: "A" },
-  //   { source: "Brian", target: "B" },
-  //   { source: "Alan", target: "B" },
-  //   { source: "Colm", target: "C" },
-  //   { source: "Chris", target: "C" },
-  // ];
+  let buzzcount = 0; //
 
   function update() {
     simulation.nodes(nodes);
     simulation.force("link").links(links);
     simulation.alpha(1).restart();
 
-    const t = svg.transition().duration(750);
+    const t = svg.transition().duration(750).ease(d3.easeElastic);
 
     node = node
       .data(nodes, (d) => d.id)
@@ -145,20 +142,32 @@
             .attr("class", "node")
             .call((enter) =>
               enter
-                .append("circle")
-                .attr("r", 20)
-                .attr("fill", (d) => color(d.team))
-            )
-            .call((enter) =>
-              enter
-                .append("text")
-                .text((d) => d.id)
-                .attr("y", ".35em")
-                .attr("fill", "#fff")
-                .attr("font-size", "12px")
-                .attr("text-anchor", "middle")
+                .append("g")
+                .attr("transform", "scale(1)")
+                .call((enter) =>
+                  enter
+                    .append("circle")
+                    .attr("r", 20)
+                    .attr("fill", (d) => color(d.team))
+                )
+                .call((enter) =>
+                  enter
+                    .append("text")
+                    .text((d) => d.id)
+                    .attr("y", ".35em")
+                    .attr("fill", "#fff")
+                    .attr("stroke-width", 0)
+                    .attr("font-size", "12px")
+                    .attr("text-anchor", "middle")
+                )
             ),
-        (update) => update,
+        (update) =>
+          update.call((update) =>
+            update
+              .selectAll("g")
+              .transition(t)
+              .attr("transform", (d) => `scale(${buzzScale(d.buzz)})`)
+          ),
         (exit) => exit.remove()
       );
 
@@ -167,7 +176,13 @@
       .join("line");
   }
 
+  d3.select("#buzzer").on("click", () =>
+    gs.send({ type: "buzzer", data: { name: "" } })
+  );
+
   // Connect to the GameServer and wire up events
+  // passing the token from the login page which
+  // was sent here via query params on the redirect.
   gs = new GameServer(`ws://${location.host}/join${location.search}`);
 
   gs.addEventListener("chat", (ev) => {
@@ -175,25 +190,16 @@
     update();
   });
 
-  gs.addEventListener("buzzer", (ev) => {
-    console.log(`${ev.detail.name} buzzed in!`);
-
-    const name = ev.detail.name;
-
-    update();
-  });
-
   gs.addEventListener("join", (ev) => {
-    console.log(`${ev.detail.name} has join team ${ev.detail.team}`);
-
     const name = ev.detail.name;
     const team = ev.detail.team;
+    console.log(`${name} has join team ${team}`);
 
     if (!nodes.find((e) => e.id == name)) {
-      nodes.push({ id: name, team: team });
+      nodes.push({ id: name, team: team, buzz: 0 });
     }
     if (!nodes.find((e) => e.id == team)) {
-      nodes.push({ id: team, team: team });
+      nodes.push({ id: team, team: team, buzz: 0 });
     }
     if (!links.find((e) => e.source == name && e.target == team)) {
       links.push({ source: name, target: team });
@@ -203,16 +209,28 @@
   });
 
   gs.addEventListener("leave", (ev) => {
-    console.log(`${ev.detail.name} has left team ${ev.detail.team}`);
-
     const name = ev.detail.name;
     const team = ev.detail.team;
+    console.log(`${name} has left team ${team}`);
 
     nodes = nodes.filter((e) => e.id != name);
     links = links.filter((e) => e.source.id != name);
 
     if (!links.find((e) => e.target.id == team)) {
       nodes = nodes.filter((e) => e.id != team);
+    }
+
+    update();
+  });
+
+  gs.addEventListener("buzzer", (ev) => {
+    const name = ev.detail.name;
+    buzzcount += 1;
+    console.log(`${name} buzzed in: ${buzzcount}!`);
+
+    const node = nodes.find((e) => e.id == name);
+    if (node) {
+      node.buzz = buzzcount;
     }
 
     update();

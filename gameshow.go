@@ -42,6 +42,7 @@ type gameShow struct {
 	// to the appropriate handler.
 	serveMux http.ServeMux
 
+	// user and subscriber mgmt
 	tokenAndSubMu sync.Mutex
 	token2user    map[string]user        // key: token value: name
 	subscribers   map[string]*subscriber // key: name
@@ -177,17 +178,18 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 	for {
 		select {
 		case msg := <-s.incoming:
-			gs.logf("received buzzer message from %+v", msg)
+			gs.logf("received message from %s: %#v", s.name, msg)
 			switch msg := msg.(type) {
 			case chatMessage:
 				gs.publish(msg)
 			case buzzerMessage:
+				msg.Name = s.name // don't trust name sent to us
 				gs.publish(msg)
 			default:
-				gs.logf("received unknown message type: +%v", msg)
+				gs.logf("received unknown message from %s: %#v", s.name, msg)
 			}
 		case msg := <-s.outgoing:
-			gs.logf("Pulling msg to publish: %+v", msg)
+			gs.logf("writing msg to %s: %#v", s.name, msg)
 			err := writeTimeout(ctx, time.Second*5, s.conn, msg)
 			if err != nil {
 				return err
@@ -233,7 +235,7 @@ func (gs *gameShow) publish(msg any) {
 	gs.publishLimiter.Wait(context.Background())
 
 	for name, s := range gs.subscribers {
-		gs.logf("publishing event to %s: %+v", name, msg)
+		gs.logf("publishing event to %s: %#v", name, msg)
 		select {
 		case s.outgoing <- encodeMessage(msg):
 		default:

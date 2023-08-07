@@ -5,6 +5,10 @@ body {
 /*   background: black; */
 /* } */
 
+#controls {
+  text-align: center;
+}
+
 #msgbox {
   visibility: hidden;
 }
