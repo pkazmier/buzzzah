@@ -131,13 +131,17 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, name, team string, c *we
 	for {
 		select {
 		case msg := <-s.incoming:
+			gs.logf("received buzzer message from %+v", msg)
 			switch msg := msg.(type) {
 			case chatMessage:
 				gs.publish(msg)
+			case buzzerMessage:
+				gs.publish(msg)
 			default:
-				gs.logf("received unknown message type: %v", msg)
+				gs.logf("received unknown message type: +%v", msg)
 			}
 		case msg := <-s.outgoing:
+			gs.logf("Pulling msg to publish: %+v", msg)
 			err := writeTimeout(ctx, time.Second*5, c, msg)
 			if err != nil {
 				return err
@@ -176,15 +180,16 @@ func (gs *gameShow) queueIncomingMessages(ctx context.Context, c *websocket.Conn
 // publish publishes the msg to all subscribers.
 // It never blocks and so messages to slow subscribers
 // are dropped.
-func (cs *gameShow) publish(msg any) {
-	cs.subscribersMu.Lock()
-	defer cs.subscribersMu.Unlock()
+func (gs *gameShow) publish(msg any) {
+	gs.subscribersMu.Lock()
+	defer gs.subscribersMu.Unlock()
 
-	cs.publishLimiter.Wait(context.Background())
+	gs.publishLimiter.Wait(context.Background())
 
-	for s := range cs.subscribers {
+	for s := range gs.subscribers {
+		gs.logf("publishing event to %s: %+v", s.name, msg)
 		select {
-		case s.outgoing <- msg:
+		case s.outgoing <- encodeMessage(msg):
 		default:
 			go s.closeSlow()
 		}
@@ -200,7 +205,7 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 
 	// Upon connection, notify others unless it is a host.
 	if !s.isHost() {
-		gs.publish(encodeMessage(joinMessage{s.name, s.team}))
+		gs.publish(joinMessage{s.name, s.team})
 	}
 }
 
@@ -212,7 +217,7 @@ func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	gs.subscribersMu.Unlock()
 
 	if !s.isHost() {
-		gs.publish(encodeMessage(leaveMessage{s.name, s.team}))
+		gs.publish(leaveMessage{s.name, s.team})
 	}
 }
 
