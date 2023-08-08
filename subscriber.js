@@ -71,6 +71,10 @@
         .id((d) => d.id)
         .distance(100)
     )
+    .force(
+      "collide",
+      d3.forceCollide((d) => buzzScale(d.buzz) * 21)
+    )
     .force("x", d3.forceX(0))
     .force("y", d3.forceY(0))
     .on("tick", ticked);
