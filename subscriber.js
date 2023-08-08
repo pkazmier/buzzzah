@@ -190,6 +190,31 @@
     update();
   });
 
+  gs.addEventListener("state", (ev) => {
+    const users = ev.detail.users;
+    const buzzed = ev.detail.buzzed;
+    const score = ev.detail.score;
+
+    console.log("Received game state:", ev.detail);
+
+    buzzIdx = {};
+    for (let i = 0; i < buzzed.length; i++) {
+      const name = buzzed[i];
+      buzzIdx[name] = i + 1;
+      buzzcount++; // update global buzzcount
+    }
+
+    users.forEach((u) => {
+      nodes.push({ id: u.name, team: u.team, buzz: buzzIdx[u.name] || 0 });
+      if (!nodes.find((e) => e.id == u.team)) {
+        nodes.push({ id: u.team, team: u.team, buzz: 0 });
+      }
+      links.push({ source: u.name, target: u.team });
+    });
+
+    update();
+  });
+
   gs.addEventListener("join", (ev) => {
     const name = ev.detail.name;
     const team = ev.detail.team;

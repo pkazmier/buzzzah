@@ -42,10 +42,13 @@ type gameShow struct {
 	// to the appropriate handler.
 	serveMux http.ServeMux
 
-	// user and subscriber mgmt
-	tokenAndSubMu sync.Mutex
-	token2user    map[string]user        // key: token value: name
-	subscribers   map[string]*subscriber // key: name
+	// game state mutex protects resources below
+	gameStateMu sync.Mutex
+
+	buzzed      []*subscriber
+	score       map[string]int         // key: team
+	token2user  map[string]User        // key: token value: name
+	subscribers map[string]*subscriber // key: name
 }
 
 // newGameShow constructs a gameShow with the defaults.
@@ -53,7 +56,8 @@ func newGameShow() *gameShow {
 	gs := &gameShow{
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
-		token2user:              make(map[string]user),
+		score:                   make(map[string]int),
+		token2user:              make(map[string]User),
 		subscribers:             make(map[string]*subscriber),
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*50), 50),
 	}
@@ -64,16 +68,16 @@ func newGameShow() *gameShow {
 	return gs
 }
 
-type user struct {
-	name string
-	team string
+type User struct {
+	Name string `json:"name"`
+	Team string `json:"team"`
 }
 
 // subscriber represents a subscriber.
 // Messages are sent on the msgs channel and if the client
 // cannot keep up with the messages, closeSlow is called.
 type subscriber struct {
-	user
+	User
 	errc     chan error
 	incoming chan any
 	outgoing chan any
@@ -81,7 +85,7 @@ type subscriber struct {
 }
 
 func (s *subscriber) isHost() bool {
-	return s.team == "host"
+	return s.Team == "host"
 }
 
 func (s *subscriber) closeSlow() {
@@ -97,8 +101,8 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	name := query.Get("name")
 	team := query.Get("team")
 
-	gs.tokenAndSubMu.Lock()
-	defer gs.tokenAndSubMu.Unlock()
+	gs.gameStateMu.Lock()
+	defer gs.gameStateMu.Unlock()
 
 	if _, userExists := gs.subscribers[name]; userExists {
 		http.Error(w, "user already exists, pick another name", http.StatusConflict)
@@ -112,7 +116,7 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gs.logf("reserving %s with token %s", name, token)
-	gs.token2user[token] = user{name, team}
+	gs.token2user[token] = User{name, team}
 
 	url := fmt.Sprintf("/subscriber.html?token=%s", url.QueryEscape(token))
 	http.Redirect(w, r, url, http.StatusSeeOther)
@@ -135,23 +139,23 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	// move user from pending to subscribers, capture the websocket
 	// in our subcriber struct, so it's safe to fully initialized
 	// and ready for the subscriber loop.
-	gs.tokenAndSubMu.Lock()
+	gs.gameStateMu.Lock()
 	user, ok := gs.token2user[token]
 	if !ok {
-		gs.tokenAndSubMu.Unlock()
+		gs.gameStateMu.Unlock()
 		gs.logf("token not found: %s", token)
 		c.Close(websocket.StatusInternalError, "token not valid")
 		return
 	}
 
 	s := &subscriber{
-		user:     user,
+		User:     user,
 		errc:     make(chan error, 1),
 		conn:     c,
 		incoming: make(chan any, 1),
 		outgoing: make(chan any, gs.subscriberMessageBuffer),
 	}
-	gs.tokenAndSubMu.Unlock()
+	gs.gameStateMu.Unlock()
 
 	err = gs.subscriberLoop(r.Context(), s)
 	if errors.Is(err, context.Canceled) {
@@ -178,18 +182,19 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 	for {
 		select {
 		case msg := <-s.incoming:
-			gs.logf("received message from %s: %#v", s.name, msg)
+			gs.logf("received message from %s: %#v", s.Name, msg)
 			switch msg := msg.(type) {
 			case chatMessage:
 				gs.publish(msg)
 			case buzzerMessage:
-				msg.Name = s.name // don't trust name sent to us
-				gs.publish(msg)
+				gs.buzzedIn(s)
+			case resetBuzzerMessage:
+				gs.clearBuzzedIn(s)
 			default:
-				gs.logf("received unknown message from %s: %#v", s.name, msg)
+				gs.logf("received unknown message from %s: %#v", s.Name, msg)
 			}
 		case msg := <-s.outgoing:
-			gs.logf("writing msg to %s: %#v", s.name, msg)
+			gs.logf("writing msg to %s: %#v", s.Name, msg)
 			err := writeTimeout(ctx, time.Second*5, s.conn, msg)
 			if err != nil {
 				return err
@@ -229,8 +234,8 @@ func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 // It never blocks and so messages to slow subscribers
 // are dropped.
 func (gs *gameShow) publish(msg any) {
-	gs.tokenAndSubMu.Lock()
-	defer gs.tokenAndSubMu.Unlock()
+	gs.gameStateMu.Lock()
+	defer gs.gameStateMu.Unlock()
 
 	gs.publishLimiter.Wait(context.Background())
 
@@ -246,27 +251,85 @@ func (gs *gameShow) publish(msg any) {
 
 // addSubscriber registers a subscriber.
 func (gs *gameShow) addSubscriber(s *subscriber) {
-	gs.logf("Adding subcriber ...")
-	gs.tokenAndSubMu.Lock()
-	gs.subscribers[s.name] = s
-	gs.tokenAndSubMu.Unlock()
+	gs.logf("Adding subcriber %s", s.Name)
+
+	gs.gameStateMu.Lock()
+
+	users := []User{} // need to initialize for JSON
+	for _, u := range gs.subscribers {
+		users = append(users, User{u.Name, u.Team})
+	}
+	buzzed := []string{} // need to initialize for JSON
+	for _, b := range gs.buzzed {
+		buzzed = append(buzzed, b.Name)
+	}
+
+	msg := gameStateMessage{
+		Users:  users,
+		Buzzed: buzzed,
+		Score:  gs.score,
+	}
+
+	s.outgoing <- encodeMessage(msg)
+
+	// Add user to subscribers list after we send state as we'll send
+	// separate join message at end of this method.
+	gs.subscribers[s.Name] = s
+	gs.gameStateMu.Unlock()
 
 	// Upon connection, notify others unless it is a host.
 	if !s.isHost() {
-		gs.publish(joinMessage{s.name, s.team})
+		gs.publish(joinMessage{s.Name, s.Team})
 	}
 }
 
 // deleteSubscriber deletes the given subscriber.
 func (gs *gameShow) deleteSubscriber(s *subscriber) {
-	gs.logf("Removing subcriber ...")
-	gs.tokenAndSubMu.Lock()
-	delete(gs.subscribers, s.name)
-	gs.tokenAndSubMu.Unlock()
+	gs.logf("Removing subcriber %s", s.Name)
+
+	gs.gameStateMu.Lock()
+	delete(gs.subscribers, s.Name)
+	gs.gameStateMu.Unlock()
 
 	if !s.isHost() {
-		gs.publish(leaveMessage{s.name, s.team})
+		gs.publish(leaveMessage{s.Name, s.Team})
 	}
+}
+
+func (gs *gameShow) buzzedIn(s *subscriber) {
+	gs.logf("%s buzzed in", s.Name)
+
+	gs.gameStateMu.Lock()
+	alreadyBuzzed := contains(gs.buzzed, s)
+	if !alreadyBuzzed {
+		gs.buzzed = append(gs.buzzed, s)
+	}
+	gs.gameStateMu.Unlock()
+
+	if !alreadyBuzzed {
+		gs.publish(buzzerMessage{s.Name})
+	}
+}
+
+func (gs *gameShow) clearBuzzedIn(s *subscriber) {
+	gs.logf("%s resetting the buzzer", s.Name)
+
+	gs.gameStateMu.Lock()
+	// we don't use gs.buzzed[:0] as we want to prevent holding refernces
+	// to subsribers, which could prevent garbage collection of old subs.
+	gs.buzzed = nil
+	gs.gameStateMu.Unlock()
+
+	gs.publish(resetBuzzerMessage{})
+}
+
+func contains[T comparable](slice []T, elt T) bool {
+	for _, e := range slice {
+		if e == elt {
+			return true
+		}
+	}
+	return false
 }
 
 func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, msg any) error {

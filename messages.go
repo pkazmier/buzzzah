@@ -51,11 +51,13 @@ type buzzerMessage struct {
 // message.type == "reset"
 type resetBuzzerMessage struct{}
 
-// scoreBoardMessage sent by host to update subscribers' sccoreboards.
+// gameStateMessage sent by host to update subscribers' sccoreboards.
 //
-// message.type == "score"
-type scoreBoardMessage struct {
-	Score map[string]int `json:"scoreboard"`
+// message.type == "state"
+type gameStateMessage struct {
+	Users  []User         `json:"users"`
+	Buzzed []string       `json:"buzzed"`
+	Score  map[string]int `json:"scoreboard"`
 }
 
 // will panic if we try to encode a non-existent message type
@@ -72,8 +74,8 @@ func encodeMessage(msg any) message {
 		encoded = message{Type: "buzzer", Data: msg}
 	case resetBuzzerMessage:
 		encoded = message{Type: "reset", Data: msg}
-	case scoreBoardMessage:
-		encoded = message{Type: "score", Data: msg}
+	case gameStateMessage:
+		encoded = message{Type: "state", Data: msg}
 	}
 	return encoded
 }
@@ -101,8 +103,8 @@ func decodeMessage(msg rawMessage) (any, error) {
 		var decoded resetBuzzerMessage
 		err = json.Unmarshal(msg.Data, &decoded)
 		return decoded, err
-	case "score":
-		var decoded scoreBoardMessage
+	case "state": // don't really need this as no one sends us state
+		var decoded gameStateMessage
 		err = json.Unmarshal(msg.Data, &decoded)
 		return decoded, err
 	default:
