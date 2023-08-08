@@ -46,11 +46,11 @@
       case 0:
         return 1;
       case 1:
-        return 4;
-      case 2:
         return 3;
+      case 2:
+        return 2.5;
       case 3:
-        return 2;
+        return 2.0;
       default:
         return 1.5;
     }
@@ -58,8 +58,9 @@
 
   let width = 2560;
   let height = 1440;
-  let default_radius = 30;
-  let default_font_size = "18px";
+  const default_radius = 40;
+  const default_font_size = "22px";
+  const default_stroke_width = 3;
 
   const color = d3.scaleOrdinal(d3.schemeCategory10);
 
@@ -109,13 +110,13 @@
   let link = g
     .append("g")
     .attr("stroke", "#fff")
-    .attr("stroke-width", 1.5)
+    .attr("stroke-width", default_stroke_width)
     .selectAll("line");
 
   let node = g
     .append("g")
     .attr("stroke", "#fff")
-    .attr("stroke-width", 1.5)
+    .attr("stroke-width", default_stroke_width)
     .selectAll(".node");
 
   function ticked() {
@@ -136,7 +137,7 @@
     simulation.force("link").links(links);
     simulation.alpha(1).restart();
 
-    const t = svg.transition().duration(500).ease(d3.easeElastic);
+    const t = svg.transition().duration(750).ease(d3.easeElastic);
 
     node = node
       .data(nodes, (d) => d.id)
