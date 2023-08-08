@@ -56,24 +56,26 @@
     }
   }
 
-  let width = 1200;
-  let height = 600;
+  let width = 2560;
+  let height = 1440;
+  let default_radius = 30;
+  let default_font_size = "18px";
 
   const color = d3.scaleOrdinal(d3.schemeCategory10);
 
   const simulation = d3
     .forceSimulation()
-    .force("charge", d3.forceManyBody().strength(-1000))
+    .force("charge", d3.forceManyBody().strength(-2000))
     .force(
       "link",
       d3
         .forceLink()
         .id((d) => d.id)
-        .distance(100)
+        .distance(200)
     )
     .force(
       "collide",
-      d3.forceCollide((d) => buzzScale(d.buzz) * 21)
+      d3.forceCollide((d) => buzzScale(d.buzz) * (default_radius * 1.05))
     )
     .force("x", d3.forceX(0))
     .force("y", d3.forceY(0))
@@ -134,7 +136,7 @@
     simulation.force("link").links(links);
     simulation.alpha(1).restart();
 
-    const t = svg.transition().duration(750).ease(d3.easeElastic);
+    const t = svg.transition().duration(500).ease(d3.easeElastic);
 
     node = node
       .data(nodes, (d) => d.id)
@@ -150,7 +152,7 @@
                 .call((enter) =>
                   enter
                     .append("circle")
-                    .attr("r", 20)
+                    .attr("r", default_radius)
                     .attr("fill", (d) => color(d.team))
                 )
                 .call((enter) =>
@@ -160,7 +162,7 @@
                     .attr("y", ".35em")
                     .attr("fill", "#fff")
                     .attr("stroke-width", 0)
-                    .attr("font-size", "12px")
+                    .attr("font-size", default_font_size)
                     .attr("text-anchor", "middle")
                 )
                 .call((enter) =>

@@ -1,11 +1,12 @@
 body {
-  grid-template-columns: 1fr 90% 1fr;
+  grid-template-columns: 1fr 95% 1fr;
 }
+
 /* svg { */
 /*   background: black; */
 /* } */
 
-.controls {
+main {
   text-align: center;
 }
 
