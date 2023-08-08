@@ -124,7 +124,6 @@
 
   let nodes = []; // list of { id: "Pete", team: "A", buzz: 0}
   let links = []; // list of { source: "Pete", target: "A" }
-  let buzzcount = 0; //
 
   function update() {
     simulation.nodes(nodes);
@@ -210,18 +209,9 @@
 
     nodes = [];
     links = [];
-    buzzcount = 0;
-
-    buzzIdx = {};
-    for (let i = 0; i < buzzed.length; i++) {
-      const name = buzzed[i];
-      buzzIdx[name] = i + 1;
-      buzzcount++; // update global buzzcount
-    }
-    console.log("DEBUG buzzIdx", buzzIdx);
 
     users.forEach((u) => {
-      nodes.push({ id: u.name, team: u.team, buzz: buzzIdx[u.name] || 0 });
+      nodes.push({ id: u.name, team: u.team, buzz: buzzed[u.name] || 0 });
       if (!nodes.find((e) => e.id == u.team)) {
         nodes.push({ id: u.team, team: u.team, buzz: 0 });
       }
@@ -237,10 +227,11 @@
   gs.addEventListener("join", (ev) => {
     const name = ev.detail.name;
     const team = ev.detail.team;
-    console.log(`${name} has join team ${team}`);
+    const buzz = ev.detail.buzz;
+    console.log(`${name} has join team ${team} with buzz place ${buzz}`);
 
     if (!nodes.find((e) => e.id == name)) {
-      nodes.push({ id: name, team: team, buzz: 0 });
+      nodes.push({ id: name, team: team, buzz: buzz });
     }
     if (!nodes.find((e) => e.id == team)) {
       nodes.push({ id: team, team: team, buzz: 0 });
@@ -269,21 +260,19 @@
 
   gs.addEventListener("buzzer", (ev) => {
     const name = ev.detail.name;
-    buzzcount += 1;
-    console.log(`${name} buzzed in: ${buzzcount}!`);
+    const buzz = ev.detail.buzz;
+    console.log(`${name} buzzed in: ${buzz}!`);
 
     const node = nodes.find((e) => e.id == name);
     if (node) {
-      node.buzz = buzzcount;
+      node.buzz = buzz;
     }
 
     update();
   });
 
   gs.addEventListener("reset", (ev) => {
-    buzzcount = 0;
     console.log("resetting buzzers");
-
     nodes.forEach((e) => (e.buzz = 0));
     update();
   });

@@ -47,7 +47,7 @@ type gameShow struct {
 	// game state mutex protects resources below
 	gameStateMu sync.Mutex
 
-	buzzed      []*subscriber
+	buzzed      map[string]int         // key: name value: order they buzzed in
 	score       map[string]int         // key: team
 	token2user  map[string]User        // key: token value: name
 	subscribers map[string]*subscriber // key: name
@@ -59,6 +59,7 @@ func newGameShow(hostTeam string) *gameShow {
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
 		hostTeam:                hostTeam,
+		buzzed:                  make(map[string]int),
 		score:                   make(map[string]int),
 		token2user:              make(map[string]User),
 		subscribers:             make(map[string]*subscriber),
@@ -246,8 +247,7 @@ func (gs *gameShow) publish(msg any) {
 
 	gs.publishLimiter.Wait(context.Background())
 
-	for name, s := range gs.subscribers {
-		gs.logf("publishing event to %s: %#v", name, msg)
+	for _, s := range gs.subscribers {
 		select {
 		case s.outgoing <- encodeMessage(msg):
 		default:
@@ -262,33 +262,36 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 
 	gs.gameStateMu.Lock()
 
+	// First, send game state to all new subs
 	users := []User{} // need to initialize for JSON
 	for _, u := range gs.subscribers {
 		if !gs.isHost(u) {
 			users = append(users, User{u.Name, u.Team})
 		}
 	}
-	buzzed := []string{} // need to initialize for JSON
-	for _, b := range gs.buzzed {
-		buzzed = append(buzzed, b.Name)
-	}
 
 	msg := gameStateMessage{
 		Users:  users,
-		Buzzed: buzzed,
+		Buzzed: gs.buzzed,
 		Score:  gs.score,
 	}
 
 	s.outgoing <- encodeMessage(msg)
 
-	// Add user to subscribers list after we send state as we'll send
-	// separate join message at end of this method.
+	// Then add user to subscribers list after we send state as we'll
+	// send separate join message at end of this method.
 	gs.subscribers[s.Name] = s
+
+	// Check to see if they had buzzed in already. How can that be if it's
+	// a new addSubscriber? They might have been disconnected and have
+	// reconnected, so let's find out if they buzzed in. If not, buzz will
+	// be set to 0 (default value of int type).
+	buzz := gs.buzzed[s.Name]
 	gs.gameStateMu.Unlock()
 
-	// Upon connection, notify others unless it is a host.
+	// Finally, notify others unless it is a host.
 	if !gs.isHost(s) {
-		gs.publish(joinMessage{s.Name, s.Team})
+		gs.publish(joinMessage{s.Name, s.Team, buzz})
 	}
 }
 
@@ -309,36 +312,25 @@ func (gs *gameShow) buzzedIn(s *subscriber) {
 	gs.logf("%s buzzed in", s.Name)
 
 	gs.gameStateMu.Lock()
-	alreadyBuzzed := contains(gs.buzzed, s)
+	_, alreadyBuzzed := gs.buzzed[s.Name]
 	if !alreadyBuzzed {
-		gs.buzzed = append(gs.buzzed, s)
+		gs.buzzed[s.Name] = len(gs.buzzed) + 1
 	}
 	gs.gameStateMu.Unlock()
 
 	if !alreadyBuzzed {
-		gs.publish(buzzerMessage{s.Name})
+		gs.publish(buzzerMessage{s.Name, gs.buzzed[s.Name]})
 	}
 }
 
 func (gs *gameShow) clearBuzzedIn(s *subscriber) {
-	gs.logf("%s resetting the buzzer", s.Name)
+	gs.logf("%s reset the buzzer", s.Name)
 
 	gs.gameStateMu.Lock()
-	// we don't use gs.buzzed[:0] as we want to prevent holding refernces
-	// to subsribers, which could prevent garbage collection of old subs.
-	gs.buzzed = nil
+	clear(gs.buzzed)
 	gs.gameStateMu.Unlock()
 
 	gs.publish(resetBuzzerMessage{})
-}
-
-func contains[T comparable](slice []T, elt T) bool {
-	for _, e := range slice {
-		if e == elt {
-			return true
-		}
-	}
-	return false
 }
 
 func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, msg any) error {

@@ -29,6 +29,7 @@ type chatMessage struct {
 type joinMessage struct {
 	Name string `json:"name"`
 	Team string `json:"team"`
+	Buzz int    `json:"buzz"`
 }
 
 // leaveMessage sent by server when subscriber leaves.
@@ -44,6 +45,7 @@ type leaveMessage struct {
 // message.type == "buzzer"
 type buzzerMessage struct {
 	Name string `json:"name"`
+	Buzz int    `json:"buzz"`
 }
 
 // resetBuzzerMessage sent by host to reset those who buzzed in.
@@ -56,7 +58,7 @@ type resetBuzzerMessage struct{}
 // message.type == "state"
 type gameStateMessage struct {
 	Users  []User         `json:"users"`
-	Buzzed []string       `json:"buzzed"`
+	Buzzed map[string]int `json:"buzzed"`
 	Score  map[string]int `json:"scoreboard"`
 }
 
