@@ -21,8 +21,8 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) < 2 {
-		return fmt.Errorf("usage: %s address:port", os.Args[0])
+	if len(os.Args) < 3 {
+		return fmt.Errorf("usage: %s address:port host_team", os.Args[0])
 	}
 
 	l, err := net.Listen("tcp", os.Args[1])
@@ -31,7 +31,7 @@ func run() error {
 	}
 	log.Printf("listening on http://%v", l.Addr())
 
-	gs := newGameShow()
+	gs := newGameShow(os.Args[2])
 	s := &http.Server{
 		Handler:      gs,
 		ReadTimeout:  time.Second * 10,

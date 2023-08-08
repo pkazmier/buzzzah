@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -42,6 +41,9 @@ type gameShow struct {
 	// to the appropriate handler.
 	serveMux http.ServeMux
 
+	// Team name that hosts use to join the game
+	hostTeam string
+
 	// game state mutex protects resources below
 	gameStateMu sync.Mutex
 
@@ -52,10 +54,11 @@ type gameShow struct {
 }
 
 // newGameShow constructs a gameShow with the defaults.
-func newGameShow() *gameShow {
+func newGameShow(hostTeam string) *gameShow {
 	gs := &gameShow{
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
+		hostTeam:                hostTeam,
 		score:                   make(map[string]int),
 		token2user:              make(map[string]User),
 		subscribers:             make(map[string]*subscriber),
@@ -84,12 +87,12 @@ type subscriber struct {
 	conn     *websocket.Conn
 }
 
-func (s *subscriber) isHost() bool {
-	return s.Team == "host"
-}
-
 func (s *subscriber) closeSlow() {
 	s.conn.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
+}
+
+func (gs *gameShow) isHost(s *subscriber) bool {
+	return s.Team == gs.hostTeam
 }
 
 func (gs *gameShow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -118,8 +121,12 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	gs.logf("reserving %s with token %s", name, token)
 	gs.token2user[token] = User{name, team}
 
-	url := fmt.Sprintf("/subscriber.html?token=%s", url.QueryEscape(token))
-	http.Redirect(w, r, url, http.StatusSeeOther)
+	params := url.Values{}
+	params.Add("token", token)
+	if team == gs.hostTeam {
+		params.Add("isHost", "true")
+	}
+	http.Redirect(w, r, "/subscriber.html?"+params.Encode(), http.StatusSeeOther)
 }
 
 // subscribeHandler accepts the WebSocket connection
@@ -257,7 +264,9 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 
 	users := []User{} // need to initialize for JSON
 	for _, u := range gs.subscribers {
-		users = append(users, User{u.Name, u.Team})
+		if !gs.isHost(u) {
+			users = append(users, User{u.Name, u.Team})
+		}
 	}
 	buzzed := []string{} // need to initialize for JSON
 	for _, b := range gs.buzzed {
@@ -278,7 +287,7 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 	gs.gameStateMu.Unlock()
 
 	// Upon connection, notify others unless it is a host.
-	if !s.isHost() {
+	if !gs.isHost(s) {
 		gs.publish(joinMessage{s.Name, s.Team})
 	}
 }
@@ -291,7 +300,7 @@ func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	delete(gs.subscribers, s.Name)
 	gs.gameStateMu.Unlock()
 
-	if !s.isHost() {
+	if !gs.isHost(s) {
 		gs.publish(leaveMessage{s.Name, s.Team})
 	}
 }

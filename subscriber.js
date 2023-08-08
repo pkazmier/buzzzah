@@ -160,6 +160,11 @@
                     .attr("font-size", "12px")
                     .attr("text-anchor", "middle")
                 )
+                .call((enter) =>
+                  enter
+                    .transition(t)
+                    .attr("transform", (d) => `scale(${buzzScale(d.buzz)})`)
+                )
             ),
         (update) =>
           update.call((update) =>
@@ -176,14 +181,20 @@
       .join("line");
   }
 
-  d3.select("#buzzer").on("click", () =>
-    gs.send({ type: "buzzer", data: { name: "" } })
+  // Grab the HTTP parameters sent with this page
+  const urlParams = new URLSearchParams(window.location.search);
+  const gsToken = urlParams.get("token");
+  const isHost = urlParams.has("isHost");
+
+  const buzzer = d3.select("#buzzer");
+  buzzer.text(isHost ? "Reset Buzzers" : "Buzz In");
+  buzzer.on("click", () =>
+    gs.send({ type: isHost ? "reset" : "buzzer", data: { name: "" } })
   );
 
-  // Connect to the GameServer and wire up events
-  // passing the token from the login page which
-  // was sent here via query params on the redirect.
-  gs = new GameServer(`ws://${location.host}/join${location.search}`);
+  const gsURL = new URL(`ws://${location.host}/join`);
+  gsURL.searchParams.append("token", gsToken);
+  gs = new GameServer(gsURL);
 
   gs.addEventListener("chat", (ev) => {
     console.log(`${ev.detail.name} sent ${ev.detail.text}`);
@@ -197,12 +208,17 @@
 
     console.log("Received game state:", ev.detail);
 
+    nodes = [];
+    links = [];
+    buzzcount = 0;
+
     buzzIdx = {};
     for (let i = 0; i < buzzed.length; i++) {
       const name = buzzed[i];
       buzzIdx[name] = i + 1;
       buzzcount++; // update global buzzcount
     }
+    console.log("DEBUG buzzIdx", buzzIdx);
 
     users.forEach((u) => {
       nodes.push({ id: u.name, team: u.team, buzz: buzzIdx[u.name] || 0 });
@@ -211,6 +227,9 @@
       }
       links.push({ source: u.name, target: u.team });
     });
+
+    console.log("DEBUG nodes", nodes);
+    console.log("DEBUG links", links);
 
     update();
   });
@@ -258,6 +277,14 @@
       node.buzz = buzzcount;
     }
 
+    update();
+  });
+
+  gs.addEventListener("reset", (ev) => {
+    buzzcount = 0;
+    console.log("resetting buzzers");
+
+    nodes.forEach((e) => (e.buzz = 0));
     update();
   });
 })();
