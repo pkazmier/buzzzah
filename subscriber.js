@@ -109,13 +109,11 @@
 
   let link = g
     .append("g")
-    .attr("stroke", "#fff")
     .attr("stroke-width", default_stroke_width)
     .selectAll("line");
 
   let node = g
     .append("g")
-    .attr("stroke", "#fff")
     .attr("stroke-width", default_stroke_width)
     .selectAll(".node");
 
@@ -132,7 +130,7 @@
   let nodes = []; // list of { id: "Pete", team: "A", buzz: 0}
   let links = []; // list of { source: "Pete", target: "A" }
 
-  function update() {
+  function updateGraph() {
     simulation.nodes(nodes);
     simulation.force("link").links(links);
     simulation.alpha(1).restart();
@@ -161,7 +159,6 @@
                     .append("text")
                     .text((d) => d.id)
                     .attr("y", ".35em")
-                    .attr("fill", "#fff")
                     .attr("stroke-width", 0)
                     .attr("font-size", default_font_size)
                     .attr("text-anchor", "middle")
@@ -187,11 +184,67 @@
       .join("line");
   }
 
+  // let scores = [];
+  let scores = [
+    { team: "Team A", score: 0, prior: 0 },
+    { team: "Team B", score: 0, prior: 0 },
+    { team: "Team C", score: 0, prior: 0 },
+  ];
+
+  const board = d3.select("table").style("opacity", 1);
+  let teamNames = board.append("thead").append("tr").selectAll("th");
+  let teamScores = board.append("tbody").append("tr").selectAll("td");
+
+  function updateScores() {
+    const t = d3.transition().duration(250);
+
+    teamNames = teamNames
+      .data(scores, (d) => d.team)
+      .join("th")
+      .text((d) => d.team);
+
+    teamScores = teamScores
+      .data(scores, (d) => d.team)
+      .join(
+        (enter) =>
+          enter
+            .append("td")
+            .text((d) => d.score)
+            .style("font-weight", 400),
+        (update) =>
+          update
+            .text((d) => d.score)
+            .style("font-weight", (d) => (d.score != d.prior ? 800 : 400))
+            .call((update) => update.transition(t).style("font-weight", 400))
+      );
+  }
+
+  updateScores();
+
+  setTimeout(() => {
+    scores = [
+      { team: "Team A", score: 0, prior: 0 },
+      { team: "Team B", score: 10, prior: 0 },
+      { team: "Team C", score: 0, prior: 0 },
+    ];
+    updateScores();
+  }, 3000);
+
+  setTimeout(() => {
+    scores = [
+      { team: "Team A", score: 0, prior: 0 },
+      { team: "Team B", score: 10, prior: 10 },
+      { team: "Team C", score: 20, prior: 0 },
+    ];
+    updateScores();
+  }, 6000);
+
   // Grab the HTTP parameters sent with this page
   const urlParams = new URLSearchParams(window.location.search);
   const gsToken = urlParams.get("token");
   const isHost = urlParams.has("isHost");
 
+  // Setup the Buzz In or Reset button
   const buzzer = d3.select("#buzzer");
   buzzer.text(isHost ? "Reset Buzzers" : "Buzz In");
   buzzer.on("click", () =>
@@ -204,7 +257,7 @@
 
   gs.addEventListener("chat", (ev) => {
     console.log(`${ev.detail.name} sent ${ev.detail.text}`);
-    update();
+    updateGraph();
   });
 
   gs.addEventListener("state", (ev) => {
@@ -228,7 +281,7 @@
     console.log("DEBUG nodes", nodes);
     console.log("DEBUG links", links);
 
-    update();
+    updateGraph();
   });
 
   gs.addEventListener("join", (ev) => {
@@ -247,7 +300,7 @@
       links.push({ source: name, target: team });
     }
 
-    update();
+    updateGraph();
   });
 
   gs.addEventListener("leave", (ev) => {
@@ -262,7 +315,7 @@
       nodes = nodes.filter((e) => e.id != team);
     }
 
-    update();
+    updateGraph();
   });
 
   gs.addEventListener("buzzer", (ev) => {
@@ -275,12 +328,12 @@
       node.buzz = buzz;
     }
 
-    update();
+    updateGraph();
   });
 
   gs.addEventListener("reset", (ev) => {
     console.log("resetting buzzers");
     nodes.forEach((e) => (e.buzz = 0));
-    update();
+    updateGraph();
   });
 })();

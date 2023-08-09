@@ -1,15 +1,63 @@
+/* 
+---------------------------------------------------------------------------
+Simple.css overrides
+---------------------------------------------------------------------------
+*/
+
 body {
   grid-template-columns: 1fr 95% 1fr;
 }
-
-/* svg { */
-/*   background: black; */
-/* } */
 
 main {
   text-align: center;
 }
 
+#scoreboard {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+td,
+th {
+  text-align: center;
+}
+
 #msgbox {
   visibility: hidden;
+}
+
+/* 
+---------------------------------------------------------------------------
+SVG styles 
+---------------------------------------------------------------------------
+*/
+
+/* svg { */
+/*   background: black; */
+/* } */
+
+circle {
+  stroke: #000;
+}
+
+line {
+  stroke: #000;
+}
+
+text {
+  fill: #000;
+}
+
+@media (prefers-color-scheme: dark) {
+  circle {
+    stroke: #fff;
+  }
+
+  line {
+    stroke: #fff;
+  }
+
+  text {
+    fill: #fff;
+  }
 }
