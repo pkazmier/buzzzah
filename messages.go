@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// TODO: Use omitifempty for all optional fields
+
 type rawMessage struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
@@ -53,6 +55,13 @@ type buzzerMessage struct {
 // message.type == "reset"
 type resetBuzzerMessage struct{}
 
+// scoreChangeMessag send by host to update one team's score.
+type scoreChangeMessage struct {
+	Team  string `json:"team"`
+	Score int    `json:"score"`
+	// Prior int    `json:"prior"`
+}
+
 // gameStateMessage sent by host to update subscribers' sccoreboards.
 //
 // message.type == "state"
@@ -76,6 +85,8 @@ func encodeMessage(msg any) message {
 		encoded = message{Type: "buzzer", Data: msg}
 	case resetBuzzerMessage:
 		encoded = message{Type: "reset", Data: msg}
+	case scoreChangeMessage:
+		encoded = message{Type: "score", Data: msg}
 	case gameStateMessage:
 		encoded = message{Type: "state", Data: msg}
 	}
@@ -103,6 +114,10 @@ func decodeMessage(msg rawMessage) (any, error) {
 		return decoded, err
 	case "reset":
 		var decoded resetBuzzerMessage
+		err = json.Unmarshal(msg.Data, &decoded)
+		return decoded, err
+	case "score":
+		var decoded scoreChangeMessage
 		err = json.Unmarshal(msg.Data, &decoded)
 		return decoded, err
 	case "state": // don't really need this as no one sends us state

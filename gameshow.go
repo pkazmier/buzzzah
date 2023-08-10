@@ -196,6 +196,9 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 				gs.publish(msg)
 			case buzzerMessage:
 				gs.buzzedIn(s)
+			case scoreChangeMessage:
+				gs.publish(msg)
+				// gs.scoreChanged(msg)
 			case resetBuzzerMessage:
 				gs.clearBuzzedIn(s)
 			default:
@@ -256,6 +259,14 @@ func (gs *gameShow) publish(msg any) {
 	}
 }
 
+// func (gs *gameShow) scoreChanged(msg scoreChangeMessage) {
+// 	gs.gameStateMu.Lock()
+// 	msg.Prior = gs.score[msg.Team]
+// 	gs.score[msg.Team] = msg.Score
+// 	gs.gameStateMu.Unlock()
+// 	gs.publish(msg)
+// }
+
 // addSubscriber registers a subscriber.
 func (gs *gameShow) addSubscriber(s *subscriber) {
 	gs.logf("Adding subcriber %s", s.Name)
@@ -287,11 +298,21 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 	// reconnected, so let's find out if they buzzed in. If not, buzz will
 	// be set to 0 (default value of int type).
 	buzz := gs.buzzed[s.Name]
+
+	// Check to see if team exists and isn't a host team, add to scroreboard.
+	_, teamExists := gs.score[s.Team]
+	if !gs.isHost(s) && !teamExists {
+		gs.score[s.Team] = 0
+	}
+
 	gs.gameStateMu.Unlock()
 
 	// Finally, notify others unless it is a host.
 	if !gs.isHost(s) {
 		gs.publish(joinMessage{s.Name, s.Team, buzz})
+		if !teamExists {
+			gs.publish(scoreChangeMessage{s.Team, 0})
+		}
 	}
 }
 

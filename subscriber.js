@@ -1,4 +1,9 @@
 (() => {
+  // Grab the HTTP parameters sent with this page
+  const urlParams = new URLSearchParams(window.location.search);
+  const gsToken = urlParams.get("token");
+  const isHost = urlParams.has("isHost");
+
   class GameServer extends EventTarget {
     constructor(url) {
       super();
@@ -184,19 +189,12 @@
       .join("line");
   }
 
-  // let scores = [];
-  let scores = [
-    { team: "Team A", score: 0, prior: 0 },
-    { team: "Team B", score: 0, prior: 0 },
-    { team: "Team C", score: 0, prior: 0 },
-  ];
-
   const board = d3.select("table").style("opacity", 1);
   let teamNames = board.append("thead").append("tr").selectAll("th");
   let teamScores = board.append("tbody").append("tr").selectAll("td");
 
   function updateScores() {
-    const t = d3.transition().duration(250);
+    const t = d3.transition().duration(1000);
 
     teamNames = teamNames
       .data(scores, (d) => d.team)
@@ -209,40 +207,59 @@
         (enter) =>
           enter
             .append("td")
-            .text((d) => d.score)
-            .style("font-weight", 400),
+            .attr("contenteditable", isHost ? "true" : "false")
+            .on(
+              "keydown",
+              (e, d) => {
+                if (isHost && e.key === "Enter") {
+                  gs.send({
+                    type: "score",
+                    data: { team: d.team, score: d.score },
+                  });
+                }
+              },
+              true
+            )
+            .text((d) => d.score),
         (update) =>
           update
+            .transition(t)
+            .style("opacity", (d) => (d.score != d.prior ? 0 : 1))
+            .transition(t)
             .text((d) => d.score)
-            .style("font-weight", (d) => (d.score != d.prior ? 800 : 400))
-            .call((update) => update.transition(t).style("font-weight", 400))
+            .style("opacity", 1)
       );
   }
 
-  updateScores();
+  // TODO: change scores into a class with methods
+  let scores = [
+    // { team: "Perf", score: 0, prior: 0 },
+    // { team: "Dev", score: 0, prior: 0 },
+    // { team: "COE", score: 0, prior: 0 },
+    // { team: "Eng", score: 0, prior: 0 },
+  ];
 
-  setTimeout(() => {
-    scores = [
-      { team: "Team A", score: 0, prior: 0 },
-      { team: "Team B", score: 10, prior: 0 },
-      { team: "Team C", score: 0, prior: 0 },
-    ];
-    updateScores();
-  }, 3000);
-
-  setTimeout(() => {
-    scores = [
-      { team: "Team A", score: 0, prior: 0 },
-      { team: "Team B", score: 10, prior: 10 },
-      { team: "Team C", score: 20, prior: 0 },
-    ];
-    updateScores();
-  }, 6000);
-
-  // Grab the HTTP parameters sent with this page
-  const urlParams = new URLSearchParams(window.location.search);
-  const gsToken = urlParams.get("token");
-  const isHost = urlParams.has("isHost");
+  // Testing purposes
+  // updateScores();
+  // setTimeout(() => {
+  //   scores = [
+  //     { team: "Perf", score: 10, prior: 0 },
+  //     { team: "Dev", score: 0, prior: 0 },
+  //     { team: "COE", score: 0, prior: 0 },
+  //     { team: "Eng", score: 0, prior: 0 },
+  //   ];
+  //   updateScores();
+  // }, 3000);
+  //
+  // setTimeout(() => {
+  //   scores = [
+  //     { team: "Perf", score: 10, prior: 10 },
+  //     { team: "Dev", score: 0, prior: 0 },
+  //     { team: "COE", score: 20, prior: 0 },
+  //     { team: "Eng", score: 0, prior: 0 },
+  //   ];
+  //   updateScores();
+  // }, 6000);
 
   // Setup the Buzz In or Reset button
   const buzzer = d3.select("#buzzer");
@@ -263,7 +280,7 @@
   gs.addEventListener("state", (ev) => {
     const users = ev.detail.users;
     const buzzed = ev.detail.buzzed;
-    const score = ev.detail.score;
+    const scoreboard = ev.detail.scoreboard;
 
     console.log("Received game state:", ev.detail);
 
@@ -278,10 +295,13 @@
       links.push({ source: u.name, target: u.team });
     });
 
-    console.log("DEBUG nodes", nodes);
-    console.log("DEBUG links", links);
+    for (let team in scoreboard) {
+      scores.push({ team: team, score: scoreboard[team], prior: 0 });
+    }
+    scores.sort((a, b) => a.team.localeCompare(b.team));
 
     updateGraph();
+    updateScores();
   });
 
   gs.addEventListener("join", (ev) => {
@@ -329,6 +349,23 @@
     }
 
     updateGraph();
+  });
+
+  gs.addEventListener("score", (ev) => {
+    const team = ev.detail.team;
+    const newScore = ev.detail.score;
+    console.log(`score changed: ${team}=${newScore}`);
+
+    found = scores.find((s) => s.team == team);
+    if (found) {
+      o.prior = o.score;
+      o.score = newScore;
+    } else {
+      scores.push({ team: team, score: newScore, prior: 0});
+      scores.sort((a, b) => a.team.localeCompare(b.team));
+    }
+
+    updateScores();
   });
 
   gs.addEventListener("reset", (ev) => {
