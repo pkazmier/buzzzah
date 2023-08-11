@@ -14,6 +14,7 @@ import (
 	"golang.org/x/time/rate"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
+	"slices"
 )
 
 // gameShow enables receiving and broadcasting Messages
@@ -47,7 +48,7 @@ type gameShow struct {
 	// game state mutex protects resources below
 	gameStateMu sync.Mutex
 
-	buzzed      map[string]int         // key: name value: order they buzzed in
+	buzzed      []string               // names that buzzed in order
 	score       map[string]int         // key: team
 	token2user  map[string]User        // key: token value: name
 	subscribers map[string]*subscriber // key: name
@@ -59,7 +60,7 @@ func newGameShow(hostTeam string) *gameShow {
 		subscriberMessageBuffer: 16,
 		logf:                    log.Printf,
 		hostTeam:                hostTeam,
-		buzzed:                  make(map[string]int),
+		buzzed:                  []string{}, // not nil for JSON serialization
 		score:                   make(map[string]int),
 		token2user:              make(map[string]User),
 		subscribers:             make(map[string]*subscriber),
@@ -197,8 +198,7 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 			case buzzerMessage:
 				gs.buzzedIn(s)
 			case scoreChangeMessage:
-				gs.publish(msg)
-				// gs.scoreChanged(msg)
+				gs.scoreChanged(s, msg)
 			case resetBuzzerMessage:
 				gs.clearBuzzedIn(s)
 			default:
@@ -259,14 +259,6 @@ func (gs *gameShow) publish(msg any) {
 	}
 }
 
-// func (gs *gameShow) scoreChanged(msg scoreChangeMessage) {
-// 	gs.gameStateMu.Lock()
-// 	msg.Prior = gs.score[msg.Team]
-// 	gs.score[msg.Team] = msg.Score
-// 	gs.gameStateMu.Unlock()
-// 	gs.publish(msg)
-// }
-
 // addSubscriber registers a subscriber.
 func (gs *gameShow) addSubscriber(s *subscriber) {
 	gs.logf("Adding subcriber %s", s.Name)
@@ -281,23 +273,31 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 		}
 	}
 
+	// Make a copy of gs.buzzed and gs.score at this point in time while
+	// we have the lock.  If we created a message with references to the
+	// gs.buzzed and gs.score, they might change before the msg is
+	// actually sent to the subscriber.
+	buzzed := make([]string, len(gs.buzzed))
+	copy(buzzed, gs.buzzed)
+
+	score := make(map[string]int, len(gs.score))
+	for k, v := range gs.score {
+		score[k] = v
+	}
 	msg := gameStateMessage{
 		Users:  users,
-		Buzzed: gs.buzzed,
-		Score:  gs.score,
+		Buzzed: buzzed,
+		Score:  score,
 	}
 
+	// Note: even though we queue this msg for sending, we need to realize
+	// it may not be sent until some point in the future, so it cannot
+	// have references to our gamestate which must be done via locks.
 	s.outgoing <- encodeMessage(msg)
 
 	// Then add user to subscribers list after we send state as we'll
 	// send separate join message at end of this method.
 	gs.subscribers[s.Name] = s
-
-	// Check to see if they had buzzed in already. How can that be if it's
-	// a new addSubscriber? They might have been disconnected and have
-	// reconnected, so let's find out if they buzzed in. If not, buzz will
-	// be set to 0 (default value of int type).
-	buzz := gs.buzzed[s.Name]
 
 	// Check to see if team exists and isn't a host team, add to scroreboard.
 	_, teamExists := gs.score[s.Team]
@@ -309,10 +309,7 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 
 	// Finally, notify others unless it is a host.
 	if !gs.isHost(s) {
-		gs.publish(joinMessage{s.Name, s.Team, buzz})
-		if !teamExists {
-			gs.publish(scoreChangeMessage{s.Team, 0})
-		}
+		gs.publish(joinMessage{s.Name, s.Team})
 	}
 }
 
@@ -322,6 +319,26 @@ func (gs *gameShow) deleteSubscriber(s *subscriber) {
 
 	gs.gameStateMu.Lock()
 	delete(gs.subscribers, s.Name)
+
+	// Remove team from scoreboard if no one left on team
+	remainingUsersInTeam := 0
+	for _, o := range gs.subscribers {
+		if o.Team == s.Team {
+			remainingUsersInTeam += 1
+		}
+	}
+	if remainingUsersInTeam == 0 {
+		delete(gs.score, s.Team)
+	}
+
+	// Remove from buzzed as well
+	newBuzzed := []string{}
+	for _, n := range gs.buzzed {
+		if n != s.Name {
+			newBuzzed = append(newBuzzed, n)
+		}
+	}
+	gs.buzzed = newBuzzed
 	gs.gameStateMu.Unlock()
 
 	if !gs.isHost(s) {
@@ -329,18 +346,28 @@ func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	}
 }
 
+func (gs *gameShow) scoreChanged(s *subscriber, msg scoreChangeMessage) {
+	gs.logf("%s changed score for team %s to %d", s.Name, msg.Team, msg.Score)
+
+	gs.gameStateMu.Lock()
+	gs.score[msg.Team] = msg.Score
+	gs.gameStateMu.Unlock()
+
+	gs.publish(msg)
+}
+
 func (gs *gameShow) buzzedIn(s *subscriber) {
 	gs.logf("%s buzzed in", s.Name)
 
 	gs.gameStateMu.Lock()
-	_, alreadyBuzzed := gs.buzzed[s.Name]
+	alreadyBuzzed := slices.Contains(gs.buzzed, s.Name)
 	if !alreadyBuzzed {
-		gs.buzzed[s.Name] = len(gs.buzzed) + 1
+		gs.buzzed = append(gs.buzzed, s.Name)
 	}
 	gs.gameStateMu.Unlock()
 
 	if !alreadyBuzzed {
-		gs.publish(buzzerMessage{s.Name, gs.buzzed[s.Name]})
+		gs.publish(buzzerMessage{s.Name})
 	}
 }
 
@@ -348,7 +375,7 @@ func (gs *gameShow) clearBuzzedIn(s *subscriber) {
 	gs.logf("%s reset the buzzer", s.Name)
 
 	gs.gameStateMu.Lock()
-	clear(gs.buzzed)
+	gs.buzzed = gs.buzzed[:0]
 	gs.gameStateMu.Unlock()
 
 	gs.publish(resetBuzzerMessage{})

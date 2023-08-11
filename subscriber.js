@@ -194,6 +194,7 @@
   let teamScores = board.append("tbody").append("tr").selectAll("td");
 
   function updateScores() {
+    scores.sort((a, b) => a.team.localeCompare(b.team));
     const t = d3.transition().duration(1000);
 
     teamNames = teamNames
@@ -208,45 +209,49 @@
           enter
             .append("td")
             .attr("contenteditable", isHost ? "true" : "false")
-            .on(
-              "keydown",
-              (e, d) => {
-                if (isHost && e.key === "Enter") {
+            .on("keydown", function (e, d) {
+              if (e.key === "Enter") {
+                const num = Number(this.innerText);
+                if (!isNaN(num)) {
                   gs.send({
                     type: "score",
-                    data: { team: d.team, score: d.score },
+                    data: { team: d.team, score: num },
                   });
+                  this.blur();
+                  d3.select(this).classed("pending", false);
+                } else {
+                  e.preventDefault();
                 }
-              },
-              true
-            )
+              }
+            })
             .text((d) => d.score),
         (update) =>
           update
             .transition(t)
-            .style("opacity", (d) => (d.score != d.prior ? 0 : 1))
+            .style("opacity", (d) => (d.changed ? 0 : 1))
             .transition(t)
             .text((d) => d.score)
             .style("opacity", 1)
+            .on("end", (d) => (d.changed = false))
       );
   }
 
   // TODO: change scores into a class with methods
   let scores = [
-    // { team: "Perf", score: 0, prior: 0 },
-    // { team: "Dev", score: 0, prior: 0 },
-    // { team: "COE", score: 0, prior: 0 },
-    // { team: "Eng", score: 0, prior: 0 },
+    // { team: "Perf", score: 0, changed: true },
+    // { team: "Dev", score: 0, changed: true },
+    // { team: "COE", score: 0, changed: true },
+    // { team: "Eng", score: 0, changed: true },
   ];
 
   // Testing purposes
   // updateScores();
   // setTimeout(() => {
   //   scores = [
-  //     { team: "Perf", score: 10, prior: 0 },
-  //     { team: "Dev", score: 0, prior: 0 },
-  //     { team: "COE", score: 0, prior: 0 },
-  //     { team: "Eng", score: 0, prior: 0 },
+  //     { team: "Perf", score: 10, changed: true },
+  //     { team: "Dev", score: 0, changed: true },
+  //     { team: "COE", score: 0, changed: true },
+  //     { team: "Eng", score: 0, changed: true },
   //   ];
   //   updateScores();
   // }, 3000);
@@ -254,9 +259,9 @@
   // setTimeout(() => {
   //   scores = [
   //     { team: "Perf", score: 10, prior: 10 },
-  //     { team: "Dev", score: 0, prior: 0 },
-  //     { team: "COE", score: 20, prior: 0 },
-  //     { team: "Eng", score: 0, prior: 0 },
+  //     { team: "Dev", score: 0, changed: true },
+  //     { team: "COE", score: 20, changed: true },
+  //     { team: "Eng", score: 0, changed: true },
   //   ];
   //   updateScores();
   // }, 6000);
@@ -287,8 +292,14 @@
     nodes = [];
     links = [];
 
+    buzzOrder = {};
+    for (let i = 0; i < buzzed.length; i++) {
+      const name = buzzed[i];
+      buzzOrder[name] = i + 1;
+    }
+
     users.forEach((u) => {
-      nodes.push({ id: u.name, team: u.team, buzz: buzzed[u.name] || 0 });
+      nodes.push({ id: u.name, team: u.team, buzz: buzzOrder[u.name] || 0 });
       if (!nodes.find((e) => e.id == u.team)) {
         nodes.push({ id: u.team, team: u.team, buzz: 0 });
       }
@@ -296,9 +307,8 @@
     });
 
     for (let team in scoreboard) {
-      scores.push({ team: team, score: scoreboard[team], prior: 0 });
+      scores.push({ team: team, score: scoreboard[team], changed: false });
     }
-    scores.sort((a, b) => a.team.localeCompare(b.team));
 
     updateGraph();
     updateScores();
@@ -307,20 +317,21 @@
   gs.addEventListener("join", (ev) => {
     const name = ev.detail.name;
     const team = ev.detail.team;
-    const buzz = ev.detail.buzz;
-    console.log(`${name} has join team ${team} with buzz place ${buzz}`);
+    console.log(`${name} has join team ${team}`);
 
     if (!nodes.find((e) => e.id == name)) {
-      nodes.push({ id: name, team: team, buzz: buzz });
+      nodes.push({ id: name, team: team, buzz: 0 });
     }
     if (!nodes.find((e) => e.id == team)) {
       nodes.push({ id: team, team: team, buzz: 0 });
+      scores.push({ team: team, score: 0, changed: false });
     }
     if (!links.find((e) => e.source == name && e.target == team)) {
       links.push({ source: name, target: team });
     }
 
     updateGraph();
+    updateScores();
   });
 
   gs.addEventListener("leave", (ev) => {
@@ -335,17 +346,26 @@
       nodes = nodes.filter((e) => e.id != team);
     }
 
+    if (!nodes.find((e) => e.team == team)) {
+      scores = scores.filter((e) => e.team != team);
+    }
+
     updateGraph();
+    updateScores();
   });
 
   gs.addEventListener("buzzer", (ev) => {
     const name = ev.detail.name;
-    const buzz = ev.detail.buzz;
-    console.log(`${name} buzzed in: ${buzz}!`);
+    console.log(`${name} buzzed in!`);
+
+    // Find the index of the last one to buzz in
+    const lastBuzzIn = nodes
+      .map((e) => e.buzz)
+      .reduce((a, b) => Math.max(a, b), 0);
 
     const node = nodes.find((e) => e.id == name);
     if (node) {
-      node.buzz = buzz;
+      node.buzz = lastBuzzIn + 1;
     }
 
     updateGraph();
@@ -353,17 +373,16 @@
 
   gs.addEventListener("score", (ev) => {
     const team = ev.detail.team;
-    const newScore = ev.detail.score;
-    console.log(`score changed: ${team}=${newScore}`);
+    const score = ev.detail.score;
+    console.log(`score changed: ${team}=${score}`);
 
-    found = scores.find((s) => s.team == team);
-    if (found) {
-      o.prior = o.score;
-      o.score = newScore;
-    } else {
-      scores.push({ team: team, score: newScore, prior: 0});
-      scores.sort((a, b) => a.team.localeCompare(b.team));
-    }
+    scores.forEach((s) => {
+      s.changed = false;
+      if (s.team == team) {
+        s.score = score;
+        s.changed = true;
+      }
+    });
 
     updateScores();
   });
