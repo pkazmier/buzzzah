@@ -32,28 +32,26 @@ SVG styles
 ---------------------------------------------------------------------------
 */
 
-circle {
-  stroke: #000;
-}
-
-line {
-  stroke: #000;
-}
-
-text {
-  fill: #000;
+:root {
+  --stroke-color: #000;
+  --fill-color: #000;
 }
 
 @media (prefers-color-scheme: dark) {
-  circle {
-    stroke: #fff;
+  :root {
+    --stroke-color: #fff;
+    --fill-color: #fff;
   }
+}
 
-  line {
-    stroke: #fff;
-  }
+circle {
+  stroke: var(--stroke-color);
+}
 
-  text {
-    fill: #fff;
-  }
+line {
+  stroke: var(--stroke-color);
+}
+
+text {
+  fill: var(--fill-color);
 }
