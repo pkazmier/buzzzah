@@ -109,9 +109,16 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	gs.gameStateMu.Lock()
 	defer gs.gameStateMu.Unlock()
 
-	if _, userExists := gs.subscribers[name]; userExists {
-		http.Error(w, "user already exists, pick another name", http.StatusConflict)
+	if name == team {
+		http.Error(w, "name and team must be different, pick another name", http.StatusConflict)
 		return
+	}
+
+	for _, user := range gs.token2user {
+		if user.Name == name || user.Team == name {
+			http.Error(w, "user already exists, pick another name", http.StatusConflict)
+			return
+		}
 	}
 
 	token, err := generateToken(32)
