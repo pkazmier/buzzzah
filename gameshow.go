@@ -52,6 +52,7 @@ type gameShow struct {
 	score       map[string]int         // key: team
 	token2user  map[string]User        // key: token value: name
 	subscribers map[string]*subscriber // key: name
+	pending     map[string]struct{}    // key: name or team
 }
 
 // newGameShow constructs a gameShow with the defaults.
@@ -64,6 +65,7 @@ func newGameShow(hostTeam string) *gameShow {
 		score:                   make(map[string]int),
 		token2user:              make(map[string]User),
 		subscribers:             make(map[string]*subscriber),
+		pending:                 make(map[string]struct{}),
 		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*50), 50),
 	}
 	gs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
@@ -114,11 +116,18 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, user := range gs.token2user {
-		if user.Name == name || user.Team == name {
+	for nameOrTeamInUse := range gs.pending {
+		if nameOrTeamInUse == name {
 			http.Error(w, "user already exists, pick another name", http.StatusConflict)
 			return
 		}
+	}
+
+	_, nameInUse := gs.subscribers[name]
+	_, teamInUse := gs.score[name]
+	if nameInUse || teamInUse {
+		http.Error(w, "user already exists, pick another name", http.StatusConflict)
+		return
 	}
 
 	token, err := generateToken(32)
@@ -129,6 +138,8 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	gs.logf("reserving %s with token %s", name, token)
 	gs.token2user[token] = User{name, team}
+	gs.pending[name] = struct{}{}
+	gs.pending[team] = struct{}{}
 
 	params := url.Values{}
 	params.Add("token", token)
@@ -311,6 +322,11 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 	if !gs.isHost(s) && !teamExists {
 		gs.score[s.Team] = 0
 	}
+
+	// Now that we've added the name and team to gs.subscribers and
+	// gs.score, we can remove them from pending.
+	delete(gs.pending, s.Name)
+	delete(gs.pending, s.Team)
 
 	gs.gameStateMu.Unlock()
 
