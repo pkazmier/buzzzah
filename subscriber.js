@@ -1,8 +1,8 @@
 (() => {
-  // Grab the HTTP parameters sent with this page
-  const urlParams = new URLSearchParams(window.location.search);
-  const gsToken = urlParams.get("token");
-  const isHost = urlParams.has("isHost");
+  const getCookieValue = (name) =>
+    document.cookie.match("(^|;)\\s*" + name + "\\s*=\\s*([^;]+)")?.pop() || "";
+
+  const isHost = getCookieValue("host") === "true";
 
   class GameServer extends EventTarget {
     constructor(url) {
@@ -23,11 +23,13 @@
         console.log(
           `WebSocket Disconnected code: ${ev.code}, reason: ${ev.reason}`
         );
-        // TODO: Don't reconnect on 1011 internal server errors.
-        // Instead popup an error message for user.
-        if (ev.code !== 1001) {
-          console.log("Reconnecting in 1s");
-          setTimeout(() => this.dial(), 1000);
+        switch (ev.code) {
+          case 1001:
+            break;
+          default:
+            // send user back to login page on error
+            window.location.replace("/");
+            break;
         }
       });
 
@@ -236,7 +238,6 @@
       );
   }
 
-  // TODO: change scores into a class with methods
   let scores = [
     // { team: "Perf", score: 0, changed: true },
     // { team: "Dev", score: 0, changed: true },
@@ -274,7 +275,6 @@
   );
 
   const gsURL = new URL(`ws://${location.host}/join`);
-  gsURL.searchParams.append("token", gsToken);
   gs = new GameServer(gsURL);
 
   gs.addEventListener("chat", (ev) => {

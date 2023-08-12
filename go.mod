@@ -1,4 +1,4 @@
-module github.com/pkazmier/gameshow
+module github.com/pkazmier/buzzzah
 
 go 1.21
 

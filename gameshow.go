@@ -7,7 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"net/url"
+	"strconv"
 	"sync"
 	"time"
 
@@ -138,15 +138,13 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	gs.logf("reserving %s with token %s", name, token)
 	gs.token2user[token] = User{name, team}
+
 	gs.pending[name] = struct{}{}
 	gs.pending[team] = struct{}{}
 
-	params := url.Values{}
-	params.Add("token", token)
-	if team == gs.hostTeam {
-		params.Add("isHost", "true")
-	}
-	http.Redirect(w, r, "/subscriber.html?"+params.Encode(), http.StatusSeeOther)
+	http.SetCookie(w, &http.Cookie{Name: "host", Value: strconv.FormatBool(team == gs.hostTeam)})
+	http.SetCookie(w, &http.Cookie{Name: "token", Value: token})
+	http.Redirect(w, r, "/subscriber.html", http.StatusSeeOther)
 }
 
 // subscribeHandler accepts the WebSocket connection
@@ -161,17 +159,27 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	defer c.Close(websocket.StatusInternalError, "")
 
 	// token that we provided when they "login"
-	token := r.URL.Query().Get("token")
+	token, err := r.Cookie("token")
+	if err != nil {
+		gs.logf("token cookie not found")
+		c.Close(websocket.StatusInternalError, "token cookie not found")
+		return
+	}
 
-	// move user from pending to subscribers, capture the websocket
-	// in our subcriber struct, so it's safe to fully initialized
-	// and ready for the subscriber loop.
 	gs.gameStateMu.Lock()
-	user, ok := gs.token2user[token]
+	user, ok := gs.token2user[token.Value]
+	_, alreadyLoggedIn := gs.subscribers[user.Name]
+	gs.gameStateMu.Unlock()
+
 	if !ok {
-		gs.gameStateMu.Unlock()
-		gs.logf("token not found: %s", token)
+		gs.logf("token not valid: %s", token.Value)
 		c.Close(websocket.StatusInternalError, "token not valid")
+		return
+	}
+
+	if alreadyLoggedIn {
+		gs.logf("%s trying to join again, closing websocket", user.Name)
+		c.Close(websocket.StatusInternalError, "duplicate login attempt")
 		return
 	}
 
@@ -182,9 +190,9 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 		incoming: make(chan any, 1),
 		outgoing: make(chan any, gs.subscriberMessageBuffer),
 	}
-	gs.gameStateMu.Unlock()
 
 	err = gs.subscriberLoop(r.Context(), s)
+
 	if errors.Is(err, context.Canceled) {
 		c.Close(websocket.StatusInternalError, err.Error())
 		return
