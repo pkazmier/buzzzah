@@ -67,8 +67,9 @@ type gameShow struct {
 	// logins via the login page, the server generates a token for them
 	// and sends it via a HTTP cookie. This cookie is used to identify the
 	// name and team of the user upon subsequent HTTP calls.
-	// TODO: do we remove a token ever? What if two tokens point the same
-	// User? What happens?
+	//
+	// Tokens are never removed from the map as this server is currently
+	// intended only to be used for a single game and thus is terminated.
 	token2user map[string]User
 
 	subscribers map[string]*subscriber // key: name
@@ -178,28 +179,21 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close(websocket.StatusInternalError, "")
 
-	// token that we provided when they "login"
 	token, err := r.Cookie("token")
 	if err != nil {
-		gs.logf("token cookie not found")
-		c.Close(websocket.StatusInternalError, "token cookie not found")
+		gs.closeWebsocket(c, "token cookie not found", DONT_UNLOCK)
 		return
 	}
 
 	gs.gameStateMu.Lock()
-	user, ok := gs.token2user[token.Value]
-	_, alreadyLoggedIn := gs.subscribers[user.Name]
-	gs.gameStateMu.Unlock()
 
-	if !ok {
-		gs.logf("token not valid: %s", token.Value)
-		c.Close(websocket.StatusInternalError, "token not valid")
+	user, tokenFound := gs.token2user[token.Value]
+	if !tokenFound {
+		gs.closeWebsocket(c, "token not found", UNLOCK)
 		return
 	}
-
-	if alreadyLoggedIn {
-		gs.logf("%s trying to join again, closing websocket", user.Name)
-		c.Close(websocket.StatusInternalError, "duplicate login attempt")
+	if _, alreadyLoggedIn := gs.subscribers[user.Name]; alreadyLoggedIn {
+		gs.closeWebsocket(c, "duplicate login attempt for "+user.Name, UNLOCK)
 		return
 	}
 
@@ -209,6 +203,32 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errc:     make(chan error, 1),
 		incoming: make(chan any, gs.subscriberMsgBuffer),
 		outgoing: make(chan any, gs.subscriberMsgBuffer),
+	}
+
+	// First message to our subscriber is the current game state, so the
+	// UI can show existing users, team scores, and current buzz state.
+	// This state does not include this new subscriber as that will be
+	// sent to all subscribers (including this one) via a joinMessage.
+	s.outgoing <- encodeMessage(gs.buildGameStateMessage())
+
+	// Add the name and team to the respective game state maps.
+	gs.subscribers[s.Name] = s
+	_, teamExists := gs.score[s.Team]
+	if !gs.isHost(s) && !teamExists {
+		gs.score[s.Team] = 0
+	}
+
+	// Remove name and team from pending as they have now been added.
+	delete(gs.pending, s.Name)
+	delete(gs.pending, s.Team)
+
+	gs.gameStateMu.Unlock()
+
+	// Notify all users that a new player has joined the game unless it's
+	// a hast. It's sent to this subscriber as it was not included in the
+	// game state that was sent earlier.
+	if !gs.isHost(s) {
+		gs.publish(joinMessage{s.Name, s.Team})
 	}
 
 	err = gs.subscriberLoop(r.Context(), s)
@@ -228,8 +248,20 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+const (
+	UNLOCK      = true
+	DONT_UNLOCK = false
+)
+
+func (gs *gameShow) closeWebsocket(c *websocket.Conn, msg string, unlockGameState bool) {
+	gs.logf(msg)
+	c.Close(websocket.StatusInternalError, msg)
+	if unlockGameState {
+		gs.gameStateMu.Unlock()
+	}
+}
+
 func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
-	gs.addSubscriber(s)
 	defer gs.deleteSubscriber(s)
 
 	go gs.queueIncomingMessages(ctx, s)
@@ -244,13 +276,13 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 			case buzzerMessage:
 				gs.buzzedIn(s)
 			case scoreChangeMessage:
-				if s.Team != gs.hostTeam {
+				if !gs.isHost(s) {
 					gs.logf("%s not permitted to send score change messages", s.Name)
 					continue
 				}
 				gs.scoreChanged(s, msg)
 			case resetBuzzerMessage:
-				if s.Team != gs.hostTeam {
+				if !gs.isHost(s) {
 					gs.logf("%s not permitted to send reset buzzer messages", s.Name)
 					continue
 				}
@@ -314,14 +346,14 @@ func (gs *gameShow) publish(msg any) {
 	}
 }
 
-// addSubscriber registers a subscriber.
-func (gs *gameShow) addSubscriber(s *subscriber) {
-	gs.logf("Adding subcriber %s", s.Name)
-
-	gs.gameStateMu.Lock()
+func (gs *gameShow) buildGameStateMessage() gameStateMessage {
+	// Note: even though we queue this msg for sending, we need to realize
+	// it may not be sent until some point in the future, so it cannot
+	// have references to our gamestate which must be done via locks.
 
 	// First, send game state to all new subs
-	users := []User{} // need to initialize for JSON
+	// need to initialize for JSON
+	users := []User{}
 	for _, u := range gs.subscribers {
 		if !gs.isHost(u) {
 			users = append(users, User{u.Name, u.Team})
@@ -344,33 +376,7 @@ func (gs *gameShow) addSubscriber(s *subscriber) {
 		Buzzed: buzzed,
 		Score:  score,
 	}
-
-	// Note: even though we queue this msg for sending, we need to realize
-	// it may not be sent until some point in the future, so it cannot
-	// have references to our gamestate which must be done via locks.
-	s.outgoing <- encodeMessage(msg)
-
-	// Then add user to subscribers list after we send state as we'll
-	// send separate join message at end of this method.
-	gs.subscribers[s.Name] = s
-
-	// Check to see if team exists and isn't a host team, add to scroreboard.
-	_, teamExists := gs.score[s.Team]
-	if !gs.isHost(s) && !teamExists {
-		gs.score[s.Team] = 0
-	}
-
-	// Now that we've added the name and team to gs.subscribers and
-	// gs.score, we can remove them from pending.
-	delete(gs.pending, s.Name)
-	delete(gs.pending, s.Team)
-
-	gs.gameStateMu.Unlock()
-
-	// Finally, notify others unless it is a host.
-	if !gs.isHost(s) {
-		gs.publish(joinMessage{s.Name, s.Team})
-	}
+	return msg
 }
 
 // deleteSubscriber deletes the given subscriber.
