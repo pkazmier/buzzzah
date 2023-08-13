@@ -7,6 +7,11 @@ import (
 
 // TODO: Use omitifempty for all optional fields
 
+type user struct {
+	Name string `json:"name"`
+	Team string `json:"team"`
+}
+
 type rawMessage struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
@@ -63,7 +68,7 @@ type scoreChangeMessage struct {
 //
 // message.type == "state"
 type gameStateMessage struct {
-	Users  []User         `json:"users"`
+	Users  []user         `json:"users"`
 	Buzzed []string       `json:"buzzed"`
 	Score  map[string]int `json:"scoreboard"`
 }
