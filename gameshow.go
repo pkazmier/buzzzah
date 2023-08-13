@@ -20,12 +20,12 @@ import (
 // gameShow enables receiving and broadcasting Messages
 // between subscribers of the game show.
 type gameShow struct {
-	// subscriberMessageBuffer controls the max number
+	// subscriberMsgBuffer controls the max number
 	// of messages that can be queued for a subscriber
 	// before it is kicked.
 	//
 	// Defaults to 16.
-	subscriberMessageBuffer int
+	subscriberMsgBuffer int
 
 	// publishLimiter controls the rate limit applied
 	// to the subcribers publishing messages.
@@ -58,15 +58,15 @@ type gameShow struct {
 // newGameShow constructs a gameShow with the defaults.
 func newGameShow(hostTeam string) *gameShow {
 	gs := &gameShow{
-		subscriberMessageBuffer: 16,
-		logf:                    log.Printf,
-		hostTeam:                hostTeam,
-		buzzed:                  []string{}, // not nil for JSON serialization
-		score:                   make(map[string]int),
-		token2user:              make(map[string]User),
-		subscribers:             make(map[string]*subscriber),
-		pending:                 make(map[string]struct{}),
-		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*50), 50),
+		subscriberMsgBuffer: 32,
+		logf:                log.Printf,
+		hostTeam:            hostTeam,
+		buzzed:              []string{}, // not nil for JSON serialization
+		score:               make(map[string]int),
+		token2user:          make(map[string]User),
+		subscribers:         make(map[string]*subscriber),
+		pending:             make(map[string]struct{}),
+		publishLimiter:      rate.NewLimiter(rate.Every(time.Millisecond*1), 100),
 	}
 	gs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
 	gs.serveMux.HandleFunc("/login", gs.loginHandler)
@@ -116,8 +116,8 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for nameOrTeamInUse := range gs.pending {
-		if nameOrTeamInUse == name {
+	for pendingNameOrTeam := range gs.pending {
+		if pendingNameOrTeam == name {
 			http.Error(w, "user already exists, pick another name", http.StatusConflict)
 			return
 		}
@@ -185,10 +185,10 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 
 	s := &subscriber{
 		User:     user,
-		errc:     make(chan error, 1),
 		conn:     c,
-		incoming: make(chan any, 1),
-		outgoing: make(chan any, gs.subscriberMessageBuffer),
+		errc:     make(chan error, 1),
+		incoming: make(chan any, gs.subscriberMsgBuffer),
+		outgoing: make(chan any, gs.subscriberMsgBuffer),
 	}
 
 	err = gs.subscriberLoop(r.Context(), s)
@@ -224,8 +224,16 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 			case buzzerMessage:
 				gs.buzzedIn(s)
 			case scoreChangeMessage:
+				if s.Team != gs.hostTeam {
+					gs.logf("%s not permitted to send score change messages", s.Name)
+					continue
+				}
 				gs.scoreChanged(s, msg)
 			case resetBuzzerMessage:
+				if s.Team != gs.hostTeam {
+					gs.logf("%s not permitted to send reset buzzer messages", s.Name)
+					continue
+				}
 				gs.clearBuzzedIn(s)
 			default:
 				gs.logf("received unknown message from %s: %#v", s.Name, msg)
@@ -245,6 +253,9 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 }
 
 func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
+	defer close(s.errc)
+	defer close(s.incoming)
+
 	for {
 		var msg rawMessage
 		err := wsjson.Read(ctx, s.conn, &msg)
@@ -263,8 +274,6 @@ func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 		}
 		s.incoming <- decoded
 	}
-	close(s.errc)
-	close(s.incoming)
 }
 
 // publish publishes the msg to all subscribers.
