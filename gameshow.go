@@ -17,40 +17,60 @@ import (
 	"slices"
 )
 
-// gameShow enables receiving and broadcasting Messages
-// between subscribers of the game show.
+// GameShow enables receiving and broadcasting Messages between subscribers.
 type gameShow struct {
-	// subscriberMsgBuffer controls the max number
-	// of messages that can be queued for a subscriber
-	// before it is kicked.
-	//
-	// Defaults to 16.
+	// SubscriberMsgBuffer controls the max number of messages that can be
+	// queued for sending to a subscriber before it is kicked. It also
+	// controls the inbound queue size. Defaults to 32.
 	subscriberMsgBuffer int
 
-	// publishLimiter controls the rate limit applied
-	// to the subcribers publishing messages.
-	//
-	// Defaults to one publish every 100ms with a burst of 20.
+	// PublishLimiter controls the rate limit applied to the subcribers
+	// publishing messages. Defaults to one publish every 1ms with a
+	// burst of 100.
 	publishLimiter *rate.Limiter
 
-	// logf controls where logs are sent.
-	//
-	// Defaults to log.Printf.
+	// Logf controls where logs are sent. Defaults to log.Printf.
 	logf func(f string, v ...interface{})
 
-	// serveMux routes the various endpoints
-	// to the appropriate handler.
+	// ServeMux routes the various HTTP endpoints to their handlers.
 	serveMux http.ServeMux
 
-	// Team name that hosts use to join the game
+	// HostTeam is the name of the team whose members are allowed to send
+	// messages designated only for hosts such as resetBuzzerMessage and
+	// scoreChangeMessage. Hosts are not allow to participate in the game
+	// as a player.
 	hostTeam string
 
-	// game state mutex protects resources below
+	// GameStateMu is the mutex that protects all of the internal game
+	// stote resources: buzzed, score, token2user, subscribers, pending.
 	gameStateMu sync.Mutex
 
-	buzzed      []string               // names that buzzed in order
-	score       map[string]int         // key: team
-	token2user  map[string]User        // key: token value: name
+	// Buzzed is the ordered list of subscriber names that have pushed
+	// their buzzer. The first element buzzed in first, while the last
+	// buzzed in last.
+	//
+	// An invariant held throughout is that this list will only contain
+	// names of subscribers an established websocket. I.e. if a subscriber
+	// disconnects while they have buzzed in, it is removed.
+	buzzed []string
+
+	// Score is a map of team names and their respective score. It serves
+	// as the authoratative source of active teams in the current game. If
+	// a subscriber joins the game to a new team, it is added. Similarly,
+	// if the last member of a team leaves the game, it is removed.
+	//
+	// The special team name designated as the hostTeam is not reflected
+	// in the scoreboard as hosts cannot participate as players.
+	score map[string]int
+
+	// Token2user is a map of tokens to Users (name and team). When a user
+	// logins via the login page, the server generates a token for them
+	// and sends it via a HTTP cookie. This cookie is used to identify the
+	// name and team of the user upon subsequent HTTP calls.
+	// TODO: do we remove a token ever? What if two tokens point the same
+	// User? What happens?
+	token2user map[string]User
+
 	subscribers map[string]*subscriber // key: name
 	pending     map[string]struct{}    // key: name or team
 }
