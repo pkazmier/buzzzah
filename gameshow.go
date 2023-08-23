@@ -36,11 +36,11 @@ type gameShow struct {
 	// ServeMux routes the various HTTP endpoints to their handlers.
 	serveMux http.ServeMux
 
-	// HostTeam is the name of the team whose members are allowed to send
-	// messages designated only for hosts such as resetBuzzerMessage and
-	// scoreChangeMessage. Hosts are not allow to participate in the game
-	// as a player.
-	hostTeam string
+	// HostTeamName is the name of the team whose members are allowed to
+	// send messages designated only for hosts such as resetBuzzerMessage
+	// and scoreChangeMessage. Hosts are not allow to participate in the
+	// game as a player.
+	hostTeamName string
 
 	// GameStateMu is the mutex that protects all of the internal game
 	// stote resources: buzzed, score, token2user, subscribers, pending.
@@ -94,15 +94,15 @@ type gameShow struct {
 	buzzed []string
 }
 
-// NewGameShow constructs a gameShow with defaults. The hostTeam parameter
+// NewGameShow constructs a gameShow with defaults. The hostTeamName parameter
 // specifies the team name that will identify users serving as hosts. Hosts
-// should join the game using this hostTeam name.
-func newGameShow(hostTeam string) *gameShow {
+// should join the game using this team name.
+func newGameShow(hostTeamName string) *gameShow {
 	gs := &gameShow{
 		logf:             log.Printf,
 		subscriberBuffer: 32,
 		publishLimiter:   rate.NewLimiter(rate.Every(time.Millisecond*1), 100),
-		hostTeam:         hostTeam,
+		hostTeamName:     hostTeamName,
 		token2user:       make(map[string]user),
 		pending:          make(map[string]struct{}),
 		subscribers:      make(map[string]*subscriber),
@@ -115,8 +115,8 @@ func newGameShow(hostTeam string) *gameShow {
 	return gs
 }
 
-// Subscriber represents a user with an active websocket and three channels
-// used to process errors, incoming, and outgoing messages.
+// Subscriber represents a user with an active websocket and the three
+// channels used to process errors, incoming, and outgoing messages.
 type subscriber struct {
 	user
 	errc     chan error
@@ -125,31 +125,52 @@ type subscriber struct {
 	conn     *websocket.Conn
 }
 
+// CloseSlow closes the websocket with an error code stating the client was
+// too slow to keep up with messages that were being sent to it.
 func (s *subscriber) closeSlow() {
 	s.conn.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
 }
 
+// IsHost returns true if the subscriber is a host, otherwise false.
 func (gs *gameShow) isHost(s *subscriber) bool {
-	return s.Team == gs.hostTeam
+	return s.Team == gs.hostTeamName
 }
 
+// ServeHTTP dispatches requests to the appropriated handlers.
 func (gs *gameShow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gs.serveMux.ServeHTTP(w, r)
 }
 
+// LoginHandler processes incoming login requests. Upon successful login, the
+// handler generates a token, which is sent to the client via a "token"
+// cookie. in addition, a "host" cookie is also included that will be "true"
+// if the subscriber joined the hostTeamName. Finally, an HTTP redirect is
+// sent to the client if successful, otherwise an HTTP error is sent.
+//
+// Login requests must include the HTTP query parameters "name" and "team".
+// Names and teams share the same namespace so they must be unique with each
+// other as well as all other users and teams already logged into the server.
 func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	name := query.Get("name")
 	team := query.Get("team")
 
-	gs.gameStateMu.Lock()
-	defer gs.gameStateMu.Unlock()
+	if name == "" || team == "" {
+		http.Error(w, "both name and team must be provided", http.StatusConflict)
+		return
+	}
 
 	if name == team {
 		http.Error(w, "name and team must be different, pick another name", http.StatusConflict)
 		return
 	}
 
+	gs.gameStateMu.Lock()
+	defer gs.gameStateMu.Unlock()
+
+	// Check to see if someone else has already logged in with the same
+	// name, but has not yet become an active subscriber. Recall, both
+	// name and team names share a namespace and must be unique.
 	for pendingNameOrTeam := range gs.pending {
 		if pendingNameOrTeam == name {
 			http.Error(w, "user already exists, pick another name", http.StatusConflict)
@@ -157,6 +178,9 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check to see if someone else has already logged in with the same
+	// name and is an active player. Recall, subscribers and score are the
+	// authoratative sources for active users and teams.
 	_, nameInUse := gs.subscribers[name]
 	_, teamInUse := gs.score[name]
 	if nameInUse || teamInUse {
@@ -170,13 +194,16 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gs.logf("reserving %s with token %s", name, token)
+	// Once the token has been generated, we save it in our toke2user map,
+	// but we also save the name and team in our pending list. This
+	// prevents a race condition where two users could enter the login
+	// requesting the same name, but before either has transitioned to an
+	// active user in the subscribe handler.
 	gs.token2user[token] = user{name, team}
-
 	gs.pending[name] = struct{}{}
 	gs.pending[team] = struct{}{}
 
-	http.SetCookie(w, &http.Cookie{Name: "host", Value: strconv.FormatBool(team == gs.hostTeam)})
+	http.SetCookie(w, &http.Cookie{Name: "host", Value: strconv.FormatBool(team == gs.hostTeamName)})
 	http.SetCookie(w, &http.Cookie{Name: "token", Value: token})
 	http.Redirect(w, r, "/subscriber.html", http.StatusSeeOther)
 }
@@ -204,13 +231,16 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Notify all users, including this subscriber, that a new player has
-	// joined the game unless it's a hast.
 	if !gs.isHost(s) {
 		gs.publish(joinMessage{s.Name, s.Team})
 	}
 
 	err = gs.subscriberLoop(r.Context(), s)
+
+	gs.deleteSubscriber(s)
+	if !gs.isHost(s) {
+		gs.publish(leaveMessage{s.Name, s.Team})
+	}
 
 	if errors.Is(err, context.Canceled) {
 		c.Close(websocket.StatusInternalError, err.Error())
@@ -270,13 +300,6 @@ func (gs *gameShow) addSubscriber(c *websocket.Conn, token string) (*subscriber,
 }
 
 func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
-	defer func() {
-		gs.deleteSubscriber(s)
-		if !gs.isHost(s) {
-			gs.publish(leaveMessage{s.Name, s.Team})
-		}
-	}()
-
 	go gs.queueIncomingMessages(ctx, s)
 
 	for {
