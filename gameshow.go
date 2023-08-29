@@ -18,35 +18,35 @@ import (
 	"slices"
 )
 
-// GameShow enables receiving and broadcasting Messages between subscribers.
+// gameShow enables receiving and broadcasting Messages between subscribers.
 type gameShow struct {
-	// Logf controls where logs are sent. Defaults to log.Printf.
+	// logf controls where logs are sent. Defaults to log.Printf.
 	logf func(f string, v ...interface{})
 
-	// SubscriberMsgBuffer controls the max number of messages that can be
+	// subscriberMsgBuffer controls the max number of messages that can be
 	// queued for sending to a subscriber before it is kicked. It also
 	// controls the inbound queue size. Defaults to 32.
 	subscriberBuffer int
 
-	// PublishLimiter controls the rate limit applied to the subcribers
+	// publishLimiter controls the rate limit applied to the subcribers
 	// publishing messages. Defaults to one publish every 1ms with a
 	// burst of 100.
 	publishLimiter *rate.Limiter
 
-	// ServeMux routes the various HTTP endpoints to their handlers.
+	// serveMux routes the various HTTP endpoints to their handlers.
 	serveMux http.ServeMux
 
-	// HostTeamName is the name of the team whose members are allowed to
+	// hostTeamName is the name of the team whose members are allowed to
 	// send messages designated only for hosts such as resetBuzzerMessage
 	// and scoreChangeMessage. Hosts are not allow to participate in the
 	// game as a player.
 	hostTeamName string
 
-	// GameStateMu is the mutex that protects all of the internal game
+	// gameStateMu is the mutex that protects all of the internal game
 	// stote resources: buzzed, score, token2user, subscribers, pending.
 	gameStateMu sync.Mutex
 
-	// Token2user is a map of tokens to Users (name and team). When a user
+	// token2user is a map of tokens to Users (name and team). When a user
 	// logins via the login page, the server generates a token for them
 	// and sends it via a HTTP cookie. This cookie is used to identify the
 	// name and team of the user upon subsequent HTTP calls.
@@ -55,13 +55,13 @@ type gameShow struct {
 	// intended only to be used for a single game and thus is terminated.
 	token2user map[string]user
 
-	// Pending is a map of user names or team names that a user has
+	// pending is a map of user names or team names that a user has
 	// submitted via the login form, but have not yet established their
 	// websocket connection. This helps prevent two users that are logging
 	// in at at the same from having collisions of any sort.
 	pending map[string]struct{}
 
-	// Subscribers is a map of user names to subscribers.
+	// subscribers is a map of user names to subscribers.
 	//
 	// One invariant is that this map only contain active users. If a name
 	// exists in this map, there is an active subscriber connected.
@@ -71,7 +71,7 @@ type gameShow struct {
 	// team names.
 	subscribers map[string]*subscriber
 
-	// Score is a map of team names and their respective score. It serves
+	// score is a map of team names and their respective score. It serves
 	// as the authoratative source of active teams in the current game. If
 	// a subscriber joins the game to a new team, it is added. Similarly,
 	// if the last member of a team leaves the game, it is removed.
@@ -84,7 +84,7 @@ type gameShow struct {
 	// users and teams names.
 	score map[string]int
 
-	// Buzzed is the ordered list of subscriber names that have pushed
+	// buzzed is the ordered list of subscriber names that have pushed
 	// their buzzer. The first element buzzed in first, while the last
 	// buzzed in last.
 	//
@@ -94,7 +94,7 @@ type gameShow struct {
 	buzzed []string
 }
 
-// NewGameShow constructs a gameShow with defaults. The hostTeamName parameter
+// newGameShow constructs a gameShow with defaults. The hostTeamName parameter
 // specifies the team name that will identify users serving as hosts. Hosts
 // should join the game using this team name.
 func newGameShow(hostTeamName string) *gameShow {
@@ -115,7 +115,7 @@ func newGameShow(hostTeamName string) *gameShow {
 	return gs
 }
 
-// Subscriber represents a user with an active websocket and the three
+// subscriber represents a user with an active websocket and the three
 // channels used to process errors, incoming, and outgoing messages.
 type subscriber struct {
 	user
@@ -125,13 +125,13 @@ type subscriber struct {
 	conn     *websocket.Conn
 }
 
-// CloseSlow closes the websocket with an error code stating the client was
+// closeSlow closes the websocket with an error code stating the client was
 // too slow to keep up with messages that were being sent to it.
 func (s *subscriber) closeSlow() {
 	s.conn.Close(websocket.StatusPolicyViolation, "connection too slow to keep up with messages")
 }
 
-// IsHost returns true if the subscriber is a host, otherwise false.
+// isHost returns true if the subscriber is a host, otherwise false.
 func (gs *gameShow) isHost(s *subscriber) bool {
 	return s.Team == gs.hostTeamName
 }
@@ -141,7 +141,7 @@ func (gs *gameShow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gs.serveMux.ServeHTTP(w, r)
 }
 
-// LoginHandler processes incoming login requests. Upon successful login, the
+// loginHandler processes incoming login requests. Upon successful login, the
 // handler generates a token, which is sent to the client via a "token"
 // cookie. in addition, a "host" cookie is also included that will be "true"
 // if the subscriber joined the hostTeamName. Finally, an HTTP redirect is
@@ -194,8 +194,8 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Once the token has been generated, we save it in our toke2user map,
-	// but we also save the name and team in our pending list. This
+	// Once the token has been generated, we save it in our token2user
+	// map, but we also save the name and team in our pending list. This
 	// prevents a race condition where two users could enter the login
 	// requesting the same name, but before either has transitioned to an
 	// active user in the subscribe handler.
@@ -208,9 +208,9 @@ func (gs *gameShow) loginHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/subscriber.html", http.StatusSeeOther)
 }
 
-// subscribeHandler accepts the WebSocket connection
-// and then processes messages sent from the subscriber
-// as well as broadcasting messages to the subscriber.
+// subscribeHandler processes incoming websocket requests, adding the user to
+// the game, setting up the subscriber loop to process incoming/outgoing
+// messages, and finally removing the user and closing the websocket.
 func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
@@ -235,6 +235,7 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 		gs.publish(joinMessage{s.Name, s.Team})
 	}
 
+	// Main loop for the subcriber, only exits when connection closed.
 	err = gs.subscriberLoop(r.Context(), s)
 
 	gs.deleteSubscriber(s)
@@ -257,6 +258,10 @@ func (gs *gameShow) subscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// addSubscriber updates the game state with the user and team, queues an
+// outgoing message with current game state, and removes the name and team
+// from the pending map now that they have been added to the game state.
+// Returns the subcriber data structure for the user on this websocket.
 func (gs *gameShow) addSubscriber(c *websocket.Conn, token string) (*subscriber, error) {
 	gs.gameStateMu.Lock()
 	defer gs.gameStateMu.Unlock()
@@ -299,6 +304,8 @@ func (gs *gameShow) addSubscriber(c *websocket.Conn, token string) (*subscriber,
 	return s, nil
 }
 
+// subscriberLoop is the main event loop that handles incoming and outgoing
+// messages to/from a subscriber.
 func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 	go gs.queueIncomingMessages(ctx, s)
 
@@ -340,6 +347,8 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 	}
 }
 
+// queueIncomingMessages reads incoming messages from the websocket and sends
+// them on a channel to be processed by the subscriberLoop.
 func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 	defer close(s.errc)
 	defer close(s.incoming)
@@ -364,9 +373,9 @@ func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 	}
 }
 
-// publish publishes the msg to all subscribers.
-// It never blocks and so messages to slow subscribers
-// are dropped.
+// publish encodes a message as JSON and then places it on all subscribers'
+// outgoing channel. This method will never block. Websockecs of subscribers
+// that cannot keep up are closed.
 func (gs *gameShow) publish(msg any) {
 	gs.gameStateMu.Lock()
 	defer gs.gameStateMu.Unlock()
@@ -382,6 +391,10 @@ func (gs *gameShow) publish(msg any) {
 	}
 }
 
+// buildGameStateMessage returns a gameStateMessage the represents the current
+// state of the game, which consists of users, team score, and users currently
+// buzzed in. Note: this method must only be called when the lock on game
+// state has been acquired.
 func (gs *gameShow) buildGameStateMessage() gameStateMessage {
 	// Note: even though we queue this msg for sending, we need to realize
 	// it may not be sent until some point in the future, so it cannot
@@ -415,7 +428,10 @@ func (gs *gameShow) buildGameStateMessage() gameStateMessage {
 	return msg
 }
 
-// deleteSubscriber deletes the given subscriber.
+// deleteSubscriber removes the specified subscriber from the game state. This
+// includes removing the team if the subscriber was the last member. It also
+// removes the subscriber from the buzzed-in list. This method does not close
+// the websocket.
 func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	gs.gameStateMu.Lock()
 	defer gs.gameStateMu.Unlock()
@@ -444,6 +460,8 @@ func (gs *gameShow) deleteSubscriber(s *subscriber) {
 	gs.buzzed = newBuzzed
 }
 
+// scoreChanged updates the scoreboard in response to a scoreChangeMessage and
+// then publishes the event to all subscirbers.
 func (gs *gameShow) scoreChanged(s *subscriber, msg scoreChangeMessage) {
 	gs.logf("%s changed score for team %s to %d", s.Name, msg.Team, msg.Score)
 
@@ -454,6 +472,9 @@ func (gs *gameShow) scoreChanged(s *subscriber, msg scoreChangeMessage) {
 	gs.publish(msg)
 }
 
+// buzzedIn updates the list of users that have buzzed in and then publishes
+// the event to all subscribers. If a subscriber has already buzzed in, then
+// this is a no-op.
 func (gs *gameShow) buzzedIn(s *subscriber) {
 	gs.logf("%s buzzed in", s.Name)
 
@@ -469,6 +490,8 @@ func (gs *gameShow) buzzedIn(s *subscriber) {
 	}
 }
 
+// clearBuzzedIn removes all subscribers from the buzzed in list and then
+// publishes a resetBuzzerMessage to all subscribers.
 func (gs *gameShow) clearBuzzedIn(s *subscriber) {
 	gs.logf("%s reset the buzzer", s.Name)
 
@@ -479,6 +502,8 @@ func (gs *gameShow) clearBuzzedIn(s *subscriber) {
 	gs.publish(resetBuzzerMessage{})
 }
 
+// writeTimeout sends a JSON message to the websocket connection with the
+// specified timeout value.
 func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn, msg any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -486,6 +511,7 @@ func writeTimeout(ctx context.Context, timeout time.Duration, c *websocket.Conn,
 	return wsjson.Write(ctx, c, msg)
 }
 
+// generateToken creates a unique token of length bits.
 func generateToken(length int) (string, error) {
 	b := make([]byte, length)
 	_, err := rand.Read(b)
