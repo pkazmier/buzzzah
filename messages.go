@@ -7,38 +7,87 @@ import (
 
 // TODO: Use omitifempty for all optional fields
 
+// user represents the name of the user and the team the user is on. Both user
+// names and team names share the same namespace, so a user name must never be
+// the same as an existing team name.
 type user struct {
 	Name string `json:"name"`
 	Team string `json:"team"`
 }
 
-type rawMessage struct {
+// incomingMessageEnvelope represents an incoming envelope from a subscriber
+// (participant or host), which includes the type of the message and the
+// undecoded JSON message. The type of message is used decode the data into a
+// type-specific message.
+type incomingMessageEnvelope struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
 }
 
-type message struct {
+// outgoingMessageEnvelope represents an outgoing envelope to be sent to a
+// subscriber (participant or host), which includes the type of the message
+// and the message itself. The type of message is used to encode the data.
+type outgoingMessageEnvelope struct {
 	Type string `json:"type"`
 	Data any    `json:"data"`
 }
 
-// chatMessage sent by subscriber to broadcast a chat.
+// chatMessage represents a message sent by a subscriber (participant or host)
+// that is intended to be broadcast to all other subscribers (participants or
+// hosts). Name is the sender and Text is the message to broadcast.
 //
-// message.type == "chat"
+// The game server will publish this chatMessage to all subscribers with an
+// envelope type set to "chat". Upon receipt, game clients should display this
+// message to its users.
+//
+// On a client, it is not an error condition to receive a chatMessage from a
+// non-participant in the game. For example, hosts can send chat messages, so
+// clients must accept messages from all senders regardless of whether or not
+// it has seen Name referenced in a joinMessage or gameStateMessage.
 type chatMessage struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
 }
 
-// joinMessage sent by server when subscriber joins.
+// joinMessage represents a message sent by the game server when a new
+// participant has joined the game. Name is the participant's name and Team is
+// the team joined.
 //
-// message.type == "join"
+// The game server will publish a joinMessage to all subscribers (participants
+// or hosts) with an envelope type set to "join". Upon receipt, game clients
+// must update their state to reflect a new participant has joined a team,
+// which may or may not exist yet from the client's perspective.
+//
+// Clients do not send joinMessages and it is an error to do so.
+//
+// Clients are guaranteed that participants will never have the same name as a
+// team because this is a shared namespace. This invariant is enforced by the
+// server.
+//
+// The game server does not send joinMessages when a host joins a game. Join
+// messages are reserved for participants only. Hosts are invisible to clients
+// with one exception: they can send chatMessages.
+//
+// Game clients, however, will receive a joinMessage for a local participant
+// (not host) upon successful login to the server. The client's UI should not
+// be updated to reflect the local user joining the game until receipt of this
+// message.
 type joinMessage struct {
 	Name string `json:"name"`
 	Team string `json:"team"`
 }
 
-// leaveMessage sent by server when subscriber leaves.
+// leaveMessage represents a message sent by the game server when a
+// participant has left the game. Name is the participant's name and Team was
+// the team they were on.
+//
+// # The game server will
+//
+// leaveMessage not sent for hosts.
+//
+// Clients never send leave messages. Only the server.
+//
+// Clients should remove teams with 0 participants.
 //
 // message.type == "leave"
 type leaveMessage struct {
@@ -74,28 +123,28 @@ type gameStateMessage struct {
 }
 
 // will panic if we try to encode a non-existent message type
-func encodeMessage(msg any) message {
-	var encoded message
+func encodeMessage(msg any) outgoingMessageEnvelope {
+	var encoded outgoingMessageEnvelope
 	switch msg.(type) {
 	case chatMessage:
-		encoded = message{Type: "chat", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "chat", Data: msg}
 	case joinMessage:
-		encoded = message{Type: "join", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "join", Data: msg}
 	case leaveMessage:
-		encoded = message{Type: "leave", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "leave", Data: msg}
 	case buzzerMessage:
-		encoded = message{Type: "buzzer", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "buzzer", Data: msg}
 	case resetBuzzerMessage:
-		encoded = message{Type: "reset", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "reset", Data: msg}
 	case scoreChangeMessage:
-		encoded = message{Type: "score", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "score", Data: msg}
 	case gameStateMessage:
-		encoded = message{Type: "state", Data: msg}
+		encoded = outgoingMessageEnvelope{Type: "state", Data: msg}
 	}
 	return encoded
 }
 
-func decodeMessage(msg rawMessage) (any, error) {
+func decodeMessage(msg incomingMessageEnvelope) (any, error) {
 	var err error
 	switch msg.Type {
 	case "chat":

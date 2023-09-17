@@ -354,7 +354,7 @@ func (gs *gameShow) queueIncomingMessages(ctx context.Context, s *subscriber) {
 	defer close(s.incoming)
 
 	for {
-		var msg rawMessage
+		var msg incomingMessageEnvelope
 		err := wsjson.Read(ctx, s.conn, &msg)
 		if err != nil {
 			s.errc <- err
