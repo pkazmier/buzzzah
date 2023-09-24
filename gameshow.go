@@ -116,7 +116,9 @@ func newGameShow(hostTeamName string) *gameShow {
 }
 
 // subscriber represents a user with an active websocket and the three
-// channels used to process errors, incoming, and outgoing messages.
+// channels used to process errors, incoming, and outgoing messages. In the
+// context of a game, a subscriber is either a participant or a host. There
+// can be more than one host.
 type subscriber struct {
 	user
 	errc     chan error

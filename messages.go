@@ -33,12 +33,13 @@ type outgoingMessageEnvelope struct {
 }
 
 // chatMessage represents a message sent by a subscriber (participant or host)
-// that is intended to be broadcast to all other subscribers (participants or
-// hosts). Name is the sender and Text is the message to broadcast.
+// that is intended to be broadcast to all other subscribers. Name is the
+// sender and Text is the message to broadcast.
 //
-// The game server will publish this chatMessage to all subscribers with an
-// envelope type set to "chat". Upon receipt, game clients should display this
-// message to its users.
+// Upon receipt of a chatMessage, the game server will publish it to all
+// subscribers (participants and hosts) including the sender with an envelope
+// type set to "chat". Game clients should display this message to its users
+// upon receipt.
 //
 // On a client, it is not an error condition to receive a chatMessage from a
 // non-participant in the game. For example, hosts can send chat messages, so
@@ -54,11 +55,13 @@ type chatMessage struct {
 // the team joined.
 //
 // The game server will publish a joinMessage to all subscribers (participants
-// or hosts) with an envelope type set to "join". Upon receipt, game clients
-// must update their state to reflect a new participant has joined a team,
-// which may or may not exist yet from the client's perspective.
+// and hosts) with an envelope type set to "join". Upon receipt, game clients
+// must update their state to reflect a new participant has joined a team. If
+// the team doesn't exist yet, the client must add it as well.
 //
-// Clients do not send joinMessages and it is an error to do so.
+// Clients should not send joinMessages for their local users. It is an error
+// to do so. The game server will publish joinMessage to other subscribers on
+// behalf of the client upon subscription.
 //
 // Clients are guaranteed that participants will never have the same name as a
 // team because this is a shared namespace. This invariant is enforced by the
@@ -69,35 +72,43 @@ type chatMessage struct {
 // with one exception: they can send chatMessages.
 //
 // Game clients, however, will receive a joinMessage for a local participant
-// (not host) upon successful login to the server. The client's UI should not
-// be updated to reflect the local user joining the game until receipt of this
-// message.
+// (not host) upon successful login to the server. The client UI should not
+// reflect the local user joining the game until receipt of this message.
 type joinMessage struct {
 	Name string `json:"name"`
 	Team string `json:"team"`
 }
 
-// leaveMessage represents a message sent by the game server when a
-// participant has left the game. Name is the participant's name and Team was
+// leaveMessage represents a message sent by the game server when an existing
+// participant has left the game. Name is the participant leaving and Team is
 // the team they were on.
 //
-// # The game server will
+// The game server will publish leaveMessage to all subscribers (participants
+// or hosts) with an envelope type set to "leave". Upon receipt, game clients
+// must update their state to reflect a participant has left the game. If the
+// participant was the last member of a team, the client must remove the team
+// as well.
 //
-// leaveMessage not sent for hosts.
+// Clients should not send leaveMessages for their local users. It is an error
+// to do so. The game server will publish leaveMessage to other subscribers on
+// behalf of a client who has left the game.
 //
-// Clients never send leave messages. Only the server.
-//
-// Clients should remove teams with 0 participants.
-//
-// message.type == "leave"
+// The game server does not send leaveMessages when a host leaves a game.
+// Leave messages are reserved for participants only. Hosts are invisible to
+// clients with one exception: they can send chatMessages.
 type leaveMessage struct {
 	Name string `json:"name"`
 	Team string `json:"team"`
 }
 
-// buzzerMessage sent by subscriber to "buzz in".
+// buzzerMessage represents a message sent by a participant, and broadcast to
+// all subscribers, to indicate a participant has "buzzed in". Name is the
+// participant that sent the message.
 //
-// message.type == "buzzer"
+// Upon receipt of the buzzerMessage, the game server will publish it to all
+// subscribers (participants and hosts) including the sender. The envelope
+// type will be set to "buzzer". Game clients should update their UI to
+// reflect a participant has buzzed in only upon receipt.
 type buzzerMessage struct {
 	Name string `json:"name"`
 }
