@@ -58,6 +58,8 @@
         return 2.5;
       case 3:
         return 2.0;
+      case 4:
+        return 1.75;
       default:
         return 1.5;
     }
@@ -164,7 +166,7 @@
                 .call((enter) =>
                   enter
                     .append("text")
-                    .text((d) => d.id)
+                    .text((d) => (d.buzz ? `${d.buzz} ${d.id}` : d.id))
                     .attr("y", ".35em")
                     .attr("stroke-width", 0)
                     .attr("font-size", default_font_size)
@@ -182,6 +184,8 @@
               .selectAll("g")
               .transition(t)
               .attr("transform", (d) => `scale(${buzzScale(d.buzz)})`)
+              .selectAll("text")
+              .text((d) => (d.buzz ? `${d.buzz} ${d.id}` : d.id))
           ),
         (exit) => exit.remove()
       );
