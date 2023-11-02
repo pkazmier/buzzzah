@@ -12,6 +12,10 @@ main {
   text-align: center;
 }
 
+#container {
+  background: var(--accent-bg);
+}
+
 #scoreboard {
   margin-left: auto;
   margin-right: auto;
