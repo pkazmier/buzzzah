@@ -166,7 +166,16 @@
                 .call((enter) =>
                   enter
                     .append("text")
-                    .text((d) => (d.buzz ? `${d.buzz} ${d.id}` : d.id))
+                    .text((d) => (d.buzz ? d.buzz : ""))
+                    .attr("y", "-1em")
+                    .attr("stroke-width", 0)
+                    .attr("font-size", "14px")
+                    .attr("text-anchor", "middle")
+                )
+                .call((enter) =>
+                  enter
+                    .append("text")
+                    .text((d) => d.id)
                     .attr("y", ".35em")
                     .attr("stroke-width", 0)
                     .attr("font-size", default_font_size)
@@ -184,8 +193,8 @@
               .selectAll("g")
               .transition(t)
               .attr("transform", (d) => `scale(${buzzScale(d.buzz)})`)
-              .selectAll("text")
-              .text((d) => (d.buzz ? `${d.buzz} ${d.id}` : d.id))
+              .select("text")
+              .text((d) => (d.buzz ? d.buzz : ""))
           ),
         (exit) => exit.remove()
       );
