@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -15,7 +16,6 @@ import (
 	"golang.org/x/time/rate"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
-	"slices"
 )
 
 // gameShow enables receiving and broadcasting Messages between subscribers.
@@ -314,7 +314,7 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 	for {
 		select {
 		case msg := <-s.incoming:
-			gs.logf("received message from %s: %#v", s.Name, msg)
+			// gs.logf("received message from %s: %#v", s.Name, msg)
 			switch msg := msg.(type) {
 			case chatMessage:
 				gs.publish(msg)
@@ -336,7 +336,7 @@ func (gs *gameShow) subscriberLoop(ctx context.Context, s *subscriber) error {
 				gs.logf("received unknown message from %s: %#v", s.Name, msg)
 			}
 		case msg := <-s.outgoing:
-			gs.logf("writing msg to %s: %#v", s.Name, msg)
+			// gs.logf("writing msg to %s: %#v", s.Name, msg)
 			err := writeTimeout(ctx, time.Second*5, s.conn, msg)
 			if err != nil {
 				return err
