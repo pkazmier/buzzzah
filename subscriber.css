@@ -58,4 +58,14 @@ line {
 
 text {
   fill: var(--fill-color);
+  stroke-width: 0;
+  text-anchor: middle;
+}
+
+text.name {
+  font-size: 22px;
+}
+
+text.position {
+  font-size: 14px;
 }

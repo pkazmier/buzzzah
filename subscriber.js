@@ -168,18 +168,14 @@
                     .append("text")
                     .text((d) => (d.buzz ? d.buzz : ""))
                     .attr("y", "-1em")
-                    .attr("stroke-width", 0)
-                    .attr("font-size", "14px")
-                    .attr("text-anchor", "middle")
+                    .attr("class", "position")
                 )
                 .call((enter) =>
                   enter
                     .append("text")
                     .text((d) => d.id)
                     .attr("y", ".35em")
-                    .attr("stroke-width", 0)
-                    .attr("font-size", default_font_size)
-                    .attr("text-anchor", "middle")
+                    .attr("class", "name")
                 )
                 .call((enter) =>
                   enter
