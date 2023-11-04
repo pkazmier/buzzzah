@@ -189,7 +189,7 @@
               .selectAll("g")
               .transition(t)
               .attr("transform", (d) => `scale(${buzzScale(d.buzz)})`)
-              .select("text")
+              .selectAll("text.position")
               .text((d) => (d.buzz ? d.buzz : ""))
           ),
         (exit) => exit.remove()
