@@ -109,7 +109,7 @@ func newGameShow(hostTeamName string) *gameShow {
 		score:            make(map[string]int),
 		buzzed:           []string{}, // not nil for JSON serialization
 	}
-	gs.serveMux.Handle("/", http.FileServer(http.Dir(".")))
+	gs.serveMux.Handle("/", http.FileServer(http.Dir("web")))
 	gs.serveMux.HandleFunc("/login", gs.loginHandler)
 	gs.serveMux.HandleFunc("/join", gs.subscribeHandler)
 	return gs
