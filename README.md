@@ -7,6 +7,8 @@ second, third ... So I built buzzzah (buzzer spelled with a Boston accent),
 which can be used to help facilitate running a game (not provided) that
 requires users to buzz in.
 
+https://github.com/pkazmier/buzzzah/assets/747855/a92507d7-7eb1-4be9-b3aa-aaadfda72316
+
 ## Installation
 
 You'll need to [install Go](https://golang.org/doc/install).
