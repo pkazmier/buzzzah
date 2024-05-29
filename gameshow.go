@@ -145,7 +145,7 @@ func (gs *gameShow) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // loginHandler processes incoming login requests. Upon successful login, the
 // handler generates a token, which is sent to the client via a "token"
-// cookie. in addition, a "host" cookie is also included that will be "true"
+// cookie. In addition, a "host" cookie is also included that will be "true"
 // if the subscriber joined the hostTeamName. Finally, an HTTP redirect is
 // sent to the client if successful, otherwise an HTTP error is sent.
 //

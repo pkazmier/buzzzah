@@ -102,38 +102,60 @@ type leaveMessage struct {
 }
 
 // buzzerMessage represents a message sent by a participant, and broadcast to
-// all subscribers, to indicate a participant has "buzzed in". Name is the
-// participant that sent the message.
+// all subscribers by the game server, to indicate a participant has "buzzed
+// in". Name is the participant that sent the message.
 //
-// Upon receipt of the buzzerMessage, the game server will publish it to all
-// subscribers (participants and hosts) including the sender. The envelope
-// type will be set to "buzzer". Game clients should update their UI to
-// reflect a participant has buzzed in only upon receipt.
+// When the game server receives a buzzerMessage, it publishes the message to
+// all subscribers (participants and hosts), including the sender, with an
+// envelope type set to "buzzer".  Upon receipt game clients must update their
+// UI to reflect a participant has buzzed in--including the local user. It is
+// the responsibility of the client to distinguish the order participants
+// buzzed in.
+//
+// The game server guarantees that a user may only buzz in once. Upon receipt
+// of multiple messages from a client, the server will simply discard all but
+// the first until it receives a resetBuzzerMessage from a host.
 type buzzerMessage struct {
 	Name string `json:"name"`
 }
 
-// resetBuzzerMessage sent by host to reset those who buzzed in.
+// resetBuzzerMessage represents a message sent by a host to reset the game
+// server's buzzer state and to notify clients the buzzers have been reset.
+// Only hosts are allowed to send this message.
 //
-// message.type == "reset"
+// Upon receipt of a resetBuzzerMessage, the game server will publish it to
+// all subscribers (participants and hosts) including the sender with an
+// envelope type set to "reset".  Game clients should clear any indication of
+// whether or not a participant has buzzed in upon receipt and ready UI to
+// allow buzzing in again.
 type resetBuzzerMessage struct{}
 
-// scoreChangeMessag send by host to update one team's score.
+// scoreChangeMessage represents a message sent by a hast to update a team's
+// score with the message envelope type of "score". Only hosts are allowed to
+// send this message.
+//
+// Upon receipt of a scoreChangeMessage, the game server will publish it to
+// all subscribers (participants and hosts). Game clients should update their
+// UI to reflect the change in score.
 type scoreChangeMessage struct {
 	Team  string `json:"team"`
 	Score int    `json:"score"`
 }
 
-// gameStateMessage sent by host to update subscribers' sccoreboards.
-//
-// message.type == "state"
+// gameStateMessage represents a message sent by the game server whenever a
+// subscriber (participants and hosts) joins. The message is sent with an
+// envelope type of "state". Users represents the participants in the game.
+// Buzzed is an list of users currently buzzed in ordered by first to last to
+// buzz in. Upon receipt of a gameStateMessage, game clients should update
+// their UI to reflect the in-progress game.
 type gameStateMessage struct {
 	Users  []user         `json:"users"`
 	Buzzed []string       `json:"buzzed"`
 	Score  map[string]int `json:"scoreboard"`
 }
 
-// will panic if we try to encode a non-existent message type
+// encodeMessage will panic if we try to encode a non-existent message type
+// because only we could cause that error.
 func encodeMessage(msg any) outgoingMessageEnvelope {
 	var encoded outgoingMessageEnvelope
 	switch msg.(type) {
@@ -155,6 +177,8 @@ func encodeMessage(msg any) outgoingMessageEnvelope {
 	return encoded
 }
 
+// decodeMessage will gracefully handle unknown message types from clients and
+// log them as we cannot be sure of what a client will send us.
 func decodeMessage(msg incomingMessageEnvelope) (any, error) {
 	var err error
 	switch msg.Type {
