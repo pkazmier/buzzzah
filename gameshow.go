@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"slices"
@@ -17,6 +19,11 @@ import (
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
+
+// Static content served by our web server
+//
+//go:embed web
+var static_assets embed.FS
 
 // gameShow enables receiving and broadcasting Messages between subscribers.
 type gameShow struct {
@@ -109,7 +116,11 @@ func newGameShow(hostTeamName string) *gameShow {
 		score:            make(map[string]int),
 		buzzed:           []string{}, // not nil for JSON serialization
 	}
-	gs.serveMux.Handle("/", http.FileServer(http.Dir("web")))
+	static_assets, err := fs.Sub(static_assets, "web")
+	if err != nil {
+		log.Fatal(err)
+	}
+	gs.serveMux.Handle("/", http.FileServer(http.FS(static_assets)))
 	gs.serveMux.HandleFunc("/login", gs.loginHandler)
 	gs.serveMux.HandleFunc("/join", gs.subscribeHandler)
 	return gs

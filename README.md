@@ -14,9 +14,7 @@ https://github.com/pkazmier/buzzzah/assets/747855/a92507d7-7eb1-4be9-b3aa-aaadfd
 You'll need to [install Go](https://golang.org/doc/install).
 
 ```sh
-git clone https://github.com/jesseduffield/lazygit.git
-cd lazygit
-go install
+go install github.com/pkazmier/buzzzah@latest
 ```
 
 ## Start a game
